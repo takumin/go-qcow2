@@ -94,21 +94,20 @@ func Create(name string, opts CreateOptions) (*Image, error) {
 
 	f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
-		if backing != nil {
-			backing.Close()
-		}
-		return nil, err
+		return nil, withCleanup(err, closeBacking(backing))
 	}
 	img, err := create(fileStorage{f}, name, opts, backing)
 	if err != nil {
-		f.Close()
-		os.Remove(name)
-		if backing != nil {
-			backing.Close()
-		}
-		return nil, err
+		return nil, withCleanup(err, f.Close(), os.Remove(name), closeBacking(backing))
 	}
 	return img, nil
+}
+
+func closeBacking(b Backing) error {
+	if b == nil {
+		return nil
+	}
+	return b.Close()
 }
 
 func create(f storage, name string, opts CreateOptions, backing Backing) (*Image, error) {
@@ -331,14 +330,12 @@ func (img *Image) SetBackingFile(name, format string) error {
 		err = img.writeHeader(&h)
 	}
 	if err != nil {
-		if backing != nil {
-			backing.Close()
-		}
-		return err
+		return withCleanup(err, closeBacking(backing))
 	}
-	if img.backing != nil {
-		img.backing.Close()
-	}
+	old := img.backing
 	img.backing = backing
+	if err := closeBacking(old); err != nil {
+		return fmt.Errorf("qcow2: backing file changed, but closing the previous one failed: %w", err)
+	}
 	return nil
 }

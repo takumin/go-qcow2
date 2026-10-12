@@ -194,8 +194,7 @@ func openImage(name string, flag int, opts *Options, depth int) (*Image, error) 
 func openStorage(st storage, name string, readOnly bool, o Options, depth int) (*Image, error) {
 	img := &Image{f: st, name: name, readOnly: readOnly, opts: o, depth: depth, noPunchHole: o.NoPunchHole}
 	if err := img.load(); err != nil {
-		st.Close()
-		return nil, err
+		return nil, withCleanup(err, st.Close())
 	}
 	return img, nil
 }
@@ -391,7 +390,8 @@ func probeFormat(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	// Read-only: a failing close cannot lose data.
+	defer func() { _ = f.Close() }()
 	var m [4]byte
 	if _, err := io.ReadFull(f, m[:]); err == nil && binary.BigEndian.Uint32(m[:]) == qcowMagic {
 		return "qcow2", nil
@@ -624,6 +624,18 @@ func (img *Image) writeUint64(off int64, v uint64) error {
 func (img *Image) l1EntriesFor(size int64) int64 {
 	perL1 := img.clusterSize << img.l2Bits
 	return (size + perL1 - 1) / perL1
+}
+
+// withCleanup returns err, adding the errors of cleanup steps that failed.
+// When every cleanup succeeded err is returned as is, so that callers can
+// still compare it with sentinel errors.
+func withCleanup(err error, cleanup ...error) error {
+	for _, c := range cleanup {
+		if c != nil {
+			return errors.Join(append([]error{err}, cleanup...)...)
+		}
+	}
+	return err
 }
 
 func alignUp(n, a int64) int64 {

@@ -19,8 +19,7 @@ func OpenRaw(name string) (*Raw, error) {
 	}
 	size, err := f.Seek(0, io.SeekEnd)
 	if err != nil {
-		f.Close()
-		return nil, err
+		return nil, withCleanup(err, f.Close())
 	}
 	return &Raw{f: f, size: size}, nil
 }

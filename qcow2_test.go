@@ -2,6 +2,7 @@ package qcow2
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -439,7 +440,7 @@ func TestReadOnly(t *testing.T) {
 func TestNotQcow2(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "x.raw")
 	os.WriteFile(path, make([]byte, 4096), 0o644)
-	if _, err := Open(path); err != ErrNotQcow2 {
+	if _, err := Open(path); !errors.Is(err, ErrNotQcow2) {
 		t.Fatalf("got %v", err)
 	}
 }
