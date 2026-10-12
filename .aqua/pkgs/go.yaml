@@ -1,0 +1,5 @@
+---
+packages:
+- name: golang/go@go1.27.2
+  tags:
+  - go

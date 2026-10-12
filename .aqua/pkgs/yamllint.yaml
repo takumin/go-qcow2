@@ -1,0 +1,5 @@
+---
+packages:
+- name: wasilibs/go-yamllint@v1.38.0
+  tags:
+  - yamllint
