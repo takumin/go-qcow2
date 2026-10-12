@@ -13,10 +13,16 @@ import (
 	"testing"
 )
 
+// requireQemu skips the test when the QEMU tools used as the reference
+// implementation are missing, or fails it when QCOW2_REQUIRE_QEMU is set
+// (as in CI), so that a broken environment cannot pass silently.
 func requireQemu(t *testing.T) {
 	t.Helper()
-	for _, tool := range []string{"qemu-img", "qemu-io"} {
+	for _, tool := range []string{"qemu-img", "qemu-io", "qemu-nbd"} {
 		if _, err := exec.LookPath(tool); err != nil {
+			if os.Getenv("QCOW2_REQUIRE_QEMU") != "" {
+				t.Fatalf("%s not found", tool)
+			}
 			t.Skipf("%s not found", tool)
 		}
 	}
