@@ -141,13 +141,10 @@ func parseHeader(buf []byte) (*header, error) {
 	h.raw = append([]byte(nil), buf[:h.HeaderLength]...)
 
 	// Header extensions follow the fixed header and end with a zero type.
+	// Images without an end marker inside the buffer are tolerated (qemu
+	// does too, as long as nothing overlaps).
 	off := int(h.HeaderLength)
-	for {
-		if off+8 > len(buf) {
-			// Images without an end marker inside the buffer are tolerated
-			// (qemu does too, as long as nothing overlaps).
-			break
-		}
+	for off+8 <= len(buf) {
 		typ := be.Uint32(buf[off:])
 		l := int(be.Uint32(buf[off+4:]))
 		off += 8

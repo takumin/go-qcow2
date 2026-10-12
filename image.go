@@ -583,7 +583,7 @@ func (img *Image) readBacking(buf []byte, g int64) error {
 	if g < bsize {
 		n = int(min(int64(len(buf)), bsize-g))
 		m, err := img.backing.ReadAt(buf[:n], g)
-		if err != nil && !(err == io.EOF && m == n) {
+		if err != nil && (err != io.EOF || m != n) {
 			return err
 		}
 	}
