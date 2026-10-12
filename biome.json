@@ -1,0 +1,13 @@
+{
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"includes": ["**/*.json", "!**/*.invalid.json"]
+	},
+	"formatter": {
+		"enabled": false
+	}
+}

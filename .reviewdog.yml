@@ -1,0 +1,21 @@
+---
+runner:
+  editorconfig-checker:
+    cmd: editorconfig-checker -no-color -format default
+    errorformat:
+    - '%-G%+P%f:'
+    - '%\s%+%l: %m'
+    - '%-Q'
+    - '%-G%.%#'
+  biome:
+    cmd: biome lint --reporter=rdjson . 2>/dev/null
+    format: rdjson
+  yamllint:
+    cmd: yamllint -f parsable .
+    format: yamllint
+  gosec:
+    cmd: gosec -quiet -fmt golint ./...
+    format: gosec
+  golangci-lint:
+    cmd: golangci-lint run --output.text.path stdout ./...
+    format: golangci-lint

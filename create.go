@@ -92,7 +92,9 @@ func Create(name string, opts CreateOptions) (*Image, error) {
 
 	opts.Size = alignUp(opts.Size, 512)
 
-	f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
+	// Creating the file the caller names is the purpose of this function;
+	// like qemu-img, the image is created world-readable (subject to umask).
+	f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644) // #nosec G302 G304
 	if err != nil {
 		return nil, withCleanup(err, closeBacking(backing))
 	}

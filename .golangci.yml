@@ -1,0 +1,8 @@
+---
+# https://golangci-lint.run/usage/configuration/
+version: '2'
+issues:
+  # Report every finding: the default caps (3 identical issues, 50 per
+  # linter) would hide problems from the lint gate.
+  max-issues-per-linter: 0
+  max-same-issues: 0

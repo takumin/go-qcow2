@@ -13,7 +13,7 @@ type Raw struct {
 
 // OpenRaw opens a raw image read-only.
 func OpenRaw(name string) (*Raw, error) {
-	f, err := os.Open(name)
+	f, err := os.Open(name) // #nosec G304 -- opening the named image is the purpose
 	if err != nil {
 		return nil, err
 	}

@@ -184,7 +184,8 @@ func openImage(name string, flag int, opts *Options, depth int) (*Image, error) 
 	if !readOnly {
 		fflag = os.O_RDWR
 	}
-	f, err := os.OpenFile(name, fflag, 0)
+	// Opening the image the caller names is the purpose of this function.
+	f, err := os.OpenFile(name, fflag, 0) // #nosec G304
 	if err != nil {
 		return nil, err
 	}
@@ -386,7 +387,7 @@ func openBackingFile(path, format string, depth int) (Backing, error) {
 // probeFormat returns "qcow2" if the file starts with the qcow2 magic and
 // "raw" otherwise.
 func probeFormat(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- the backing file named by the image or the caller
 	if err != nil {
 		return "", err
 	}
