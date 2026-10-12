@@ -1,0 +1,110 @@
+---
+name: Reviewdog
+on:
+  workflow_call:
+permissions: {}
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+concurrency:
+  group: reviewdog-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  matrix:
+    name: Matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      targets: ${{ steps.matrix.outputs.result }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Setup aqua
+      uses: aquaproj/aqua-installer@82d0e83878a8657c4a6f2ff1755d3bfbfc67f329 # v4.1.0
+      with:
+        aqua_version: v2.64.0
+    - name: Generate Matrix
+      id: matrix
+      run: echo "result=$(just reviewdog matrix)" >> "$GITHUB_OUTPUT"
+    - name: Check Matrix
+      env:
+        REVIEWDOG_MATRIX: ${{ steps.matrix.outputs.result }}
+      run: |-
+        echo "${REVIEWDOG_MATRIX}" | jq
+  reviewdog:
+    needs: matrix
+    name: Reviewdog (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.matrix.outputs.targets) }}
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+      pull-requests: write
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Setup aqua
+      uses: aquaproj/aqua-installer@82d0e83878a8657c4a6f2ff1755d3bfbfc67f329 # v4.1.0
+      with:
+        aqua_version: v2.64.0
+        aqua_opts: -t reviewdog,${{ matrix.target }}
+    - name: Restore go mod cache
+      if: ${{ contains(fromJson('["gosec","golangci-lint"]'), matrix.name) }}
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: deps-${{ hashFiles('**/go.sum') }}
+        restore-keys: |-
+          deps-
+        path: ~/go/pkg/mod/
+    - name: Restore aqua cache
+      if: ${{ contains(fromJson('["gosec","golangci-lint"]'), matrix.name) }}
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: aqua-${{ hashFiles('.aqua/**/*.yaml', '.aqua/**/*.yml') }}
+        restore-keys: |-
+          aqua-
+        path: ~/.local/share/aquaproj-aqua/
+    - name: Restore go build cache
+      id: go-build
+      if: ${{ contains(fromJson('["gosec","golangci-lint"]'), matrix.name) }}
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: go-build-reviewdog-${{ matrix.name }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |-
+          go-build-reviewdog-${{ matrix.name }}-
+        path: ~/.cache/go-build
+    - name: Running reviewdog
+      run: just reviewdog "${REVIEWDOG_TARGET}"
+      env:
+        REVIEWDOG_TARGET: ${{ matrix.target }}
+        # A pull_request raised from a fork gets a read-only GITHUB_TOKEN
+        # whatever this job's `permissions` asks for, so a review-posting
+        # reporter answers 403. Falling back to `local` keeps the -fail-level
+        # gate in the task, so findings still fail the job; only the inline
+        # annotations are lost. pull_request_target keeps a write token even
+        # from a fork, so it stays on the review reporter.
+        REVIEWDOG_REPORTER: >-
+          ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && 'local'
+          || (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && 'github-pr-review'
+          || github.event_name == 'push' && 'github-check'
+          || 'local' }}
+        REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Appended to the task's base REVIEWDOG_ARGS, which carry the
+        # -fail-level/-filter-mode lint gate; these only add CI debug output.
+        REVIEWDOG_ARGS: -log-level 'debug' -tee
+    - name: Save go build cache
+      if: contains(fromJson('["gosec","golangci-lint"]'), matrix.name) && github.ref == 'refs/heads/main' && steps.go-build.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: ${{ steps.go-build.outputs.cache-primary-key }}
+        path: ~/.cache/go-build

@@ -13,6 +13,17 @@ runner:
   yamllint:
     cmd: yamllint -f parsable .
     format: yamllint
+  jactionlint:
+    cmd: jactionlint --shellcheck shellcheck --format sarif
+    format: sarif
+  ghalint-run:
+    cmd: ghalint --log-color never run
+    errorformat:
+    - '%.%#error="%m" job_name=%.%#workflow_file_path=%f'
+    - '%-G%.%#'
+  zizmor:
+    cmd: zizmor --quiet --no-progress --format=sarif .
+    format: sarif
   gosec:
     cmd: gosec -quiet -fmt golint ./...
     format: gosec

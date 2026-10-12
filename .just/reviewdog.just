@@ -13,7 +13,7 @@ base_args := "-filter-mode nofilter -log-level warning -fail-level any"
 
 # Run every linter
 [default]
-all: editorconfig-checker biome yamllint renovate gosec golangci-lint
+all: editorconfig-checker biome yamllint renovate jactionlint ghalint-run zizmor gosec golangci-lint
 
 # Print the CI matrix of linters (every recipe in the lint group)
 matrix: (tool::aqua 'reviewdog')
@@ -42,6 +42,18 @@ yamllint: (tool::aqua 'yamllint') (run 'yamllint')
 [group('lint')]
 renovate: (tool::aqua 'jv')
     jv https://docs.renovatebot.com/renovate-schema.json .renovaterc.json
+
+# Lint GitHub Actions workflows
+[group('lint')]
+jactionlint: (tool::aqua 'jactionlint') (run 'jactionlint')
+
+# Enforce workflow policies (permissions, pinning, timeouts, ...)
+[group('lint')]
+ghalint-run: (tool::aqua 'ghalint') (run 'ghalint-run')
+
+# Audit workflows for security issues
+[group('lint')]
+zizmor: (tool::aqua 'zizmor') (run 'zizmor')
 
 # Run the Go security checker
 [group('lint')]

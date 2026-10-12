@@ -1,0 +1,77 @@
+---
+name: CI
+on:
+  push:
+    branches:
+    - main
+    tags:
+    - 'v*'
+  pull_request:
+permissions: {}
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  format:
+    name: Format
+    permissions:
+      contents: read
+    uses: $/.github/workflows/wc-format.yml
+  reviewdog:
+    name: Reviewdog
+    permissions:
+      actions: read
+      checks: write
+      contents: read
+      pull-requests: write
+    uses: $/.github/workflows/wc-reviewdog.yml
+  fetch:
+    name: Fetch
+    permissions:
+      contents: read
+    uses: $/.github/workflows/wc-fetch.yml
+  test:
+    name: Test
+    permissions:
+      contents: read
+    uses: $/.github/workflows/wc-test.yml
+  # Informational only: reports a coverage number for visibility but is
+  # intentionally left out of the `ci` gate below, so it never blocks a merge.
+  # Test correctness is already gated by `test`.
+  coverage:
+    name: Coverage
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    uses: $/.github/workflows/wc-coverage.yml
+  audit:
+    name: Audit
+    permissions:
+      contents: read
+    uses: $/.github/workflows/wc-audit.yml
+  # A library ships no binaries: this only proves that it compiles (with its
+  # tests) for every supported OS and architecture.
+  build:
+    name: Build
+    permissions:
+      contents: read
+    uses: $/.github/workflows/wc-build.yml
+  ci:
+    needs:
+    - format
+    - reviewdog
+    - fetch
+    - test
+    - audit
+    - build
+    name: CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    if: ${{ failure() || cancelled() }}
+    steps:
+    - name: Failure Status
+      run: exit 1

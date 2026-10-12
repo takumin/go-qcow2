@@ -1,0 +1,87 @@
+---
+name: Coverage
+on:
+  workflow_call:
+permissions: {}
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # octocov posts a coverage comment on pull requests and reads/writes the
+      # report from the GitHub Actions Artifacts datastore.
+      actions: read
+      pull-requests: write
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Setup aqua
+      uses: aquaproj/aqua-installer@82d0e83878a8657c4a6f2ff1755d3bfbfc67f329 # v4.1.0
+      with:
+        aqua_version: v2.64.0
+    - name: Restore go mod cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: deps-${{ hashFiles('**/go.sum') }}
+        restore-keys: |-
+          deps-
+        path: ~/go/pkg/mod/
+    - name: Restore aqua cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: aqua-${{ hashFiles('.aqua/**/*.yaml', '.aqua/**/*.yml') }}
+        restore-keys: |-
+          aqua-
+        path: ~/.local/share/aquaproj-aqua/
+    - name: Setup QEMU
+      run: |-
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends qemu-utils
+    - name: Setup Go
+      run: just tool go-mod
+    - name: Coverage
+      run: just coverage
+      env:
+        QCOW2_REQUIRE_QEMU: '1'
+    # Surface the per-function table and total line in the run's job summary
+    # for at-a-glance visibility. It re-renders from the profile the previous
+    # step already collected (no test re-run), so it is cheap.
+    - name: Summary
+      if: ${{ always() }}
+      run: |-
+        {
+          echo '## Coverage'
+          echo ''
+          echo '```text'
+          go tool cover -func coverage/coverage.out || echo '(coverage data unavailable)'
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+    - name: Setup octocov
+      run: just tool aqua octocov
+    # octocov posts a coverage/code-to-test/exec-time comment on pull requests
+    # and, on the default branch, publishes the report to the Actions Artifacts
+    # datastore for aggregation by takumin/octocov-central. No acceptable
+    # threshold is configured, so this stays informational.
+    #
+    # The Artifacts datastore needs ACTIONS_RUNTIME_TOKEN, which the runner
+    # injects into action steps only — from a plain `run:` step octocov aborts
+    # with "env ACTIONS_RUNTIME_TOKEN is only available from the context of an
+    # action". So invoke it through a JavaScript action; github-script execs the
+    # aqua-pinned binary, keeping aqua the single source of truth for the octocov
+    # version (k1LoW/octocov-action would install a second copy of its own).
+    - name: Octocov
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        script: await exec.exec('octocov')

@@ -1,0 +1,128 @@
+---
+name: Test
+on:
+  workflow_call:
+permissions: {}
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Setup aqua
+      uses: aquaproj/aqua-installer@82d0e83878a8657c4a6f2ff1755d3bfbfc67f329 # v4.1.0
+      with:
+        aqua_version: v2.64.0
+    - name: Restore go mod cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: deps-${{ hashFiles('**/go.sum') }}
+        restore-keys: |-
+          deps-
+        path: ~/go/pkg/mod/
+    - name: Restore aqua cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: aqua-${{ hashFiles('.aqua/**/*.yaml', '.aqua/**/*.yml') }}
+        restore-keys: |-
+          aqua-
+        path: ~/.local/share/aquaproj-aqua/
+    - name: Restore go build cache
+      id: go-build
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: go-build-test-${{ hashFiles('**/go.sum') }}
+        restore-keys: |-
+          go-build-test-
+        path: ~/.cache/go-build
+    # The tests use qemu-img, qemu-io and qemu-nbd as the reference
+    # implementation; they are system packages, not aqua tools.
+    - name: Setup QEMU
+      run: |-
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends qemu-utils
+    - name: Setup Go
+      run: |-
+        just tool go-mod
+    - name: Test
+      run: |-
+        just test
+      env:
+        QCOW2_REQUIRE_QEMU: '1'
+    - name: Save go build cache
+      if: github.ref == 'refs/heads/main' && steps.go-build.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: ${{ steps.go-build.outputs.cache-primary-key }}
+        path: ~/.cache/go-build
+  crash:
+    name: Crash consistency
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Setup aqua
+      uses: aquaproj/aqua-installer@82d0e83878a8657c4a6f2ff1755d3bfbfc67f329 # v4.1.0
+      with:
+        aqua_version: v2.64.0
+    - name: Restore go mod cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: deps-${{ hashFiles('**/go.sum') }}
+        restore-keys: |-
+          deps-
+        path: ~/go/pkg/mod/
+    - name: Restore aqua cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: aqua-${{ hashFiles('.aqua/**/*.yaml', '.aqua/**/*.yml') }}
+        restore-keys: |-
+          aqua-
+        path: ~/.local/share/aquaproj-aqua/
+    - name: Restore go build cache
+      id: go-build
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: go-build-crash-${{ hashFiles('**/go.sum') }}
+        restore-keys: |-
+          go-build-crash-
+        path: ~/.cache/go-build
+    # The tests use qemu-img, qemu-io and qemu-nbd as the reference
+    # implementation; they are system packages, not aqua tools.
+    - name: Setup QEMU
+      run: |-
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends qemu-utils
+    - name: Setup Go
+      run: |-
+        just tool go-mod
+    # Simulates process crashes and power loss at every metadata update;
+    # `just test` only samples them.
+    - name: Crash consistency
+      run: |-
+        just test crash
+      env:
+        QCOW2_REQUIRE_QEMU: '1'
+    - name: Save go build cache
+      if: github.ref == 'refs/heads/main' && steps.go-build.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        key: ${{ steps.go-build.outputs.cache-primary-key }}
+        path: ~/.cache/go-build
