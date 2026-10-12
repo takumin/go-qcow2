@@ -1,3 +1,7 @@
+/.claude/worktrees/
+/.claude/settings.local.json
+/coverage/
+/dist/
 *.test
 *.out
 /.bench/
