@@ -1,0 +1,40 @@
+---
+pre-commit:
+  commands:
+    pinact:
+      glob: ".github/**/*.{yaml,yml}"
+      run: pinact run {staged_files}
+      stage_fixed: true
+    ghalint-run:
+      glob: ".github/workflows/*.{yaml,yml}"
+      run: ghalint run {staged_files}
+      stage_fixed: true
+    jactionlint:
+      glob: ".github/workflows/*.{yaml,yml}"
+      run: jactionlint {staged_files}
+      stage_fixed: true
+    biome:
+      glob: "*.{json}"
+      run: biome lint --no-errors-on-unmatched {staged_files}
+    yamllint:
+      glob: "*.{yaml,yml}"
+      run: yamllint {staged_files}
+    yamlfmt:
+      glob: "*.{yaml,yml}"
+      run: yamlfmt {staged_files}
+      stage_fixed: true
+    justfmt:
+      glob: "{Justfile,*.just}"
+      run: for f in {staged_files}; do just --unstable --fmt --justfile "$f"; done
+      stage_fixed: true
+    gofmt:
+      glob: "*.{go}"
+      run: gofmt -s -w {staged_files}
+      stage_fixed: true
+    gosec:
+      glob: "*.{go}"
+      run: gosec -quiet {staged_files}
+    golangci-lint:
+      files: git ls-files -m
+      glob: "*.{go}"
+      run: golangci-lint run ./...
