@@ -103,7 +103,7 @@ func TestDiscardEverything(t *testing.T) {
 	if img.fileEnd != end {
 		t.Fatalf("second discard grew the file")
 	}
-	img.Close()
+	closeImage(t, img)
 	qemuCheck(t, path)
 	assertEqual(t, "qemu view", qemuRaw(t, path), make([]byte, len(want)))
 	out := run(t, "qemu-img", "map", "--output=json", path)
@@ -165,7 +165,7 @@ func TestDiscardReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer img.Close()
+	defer closeImage(t, img)
 	if err := img.Discard(0, 4096); err != ErrReadOnly {
 		t.Fatalf("got %v, want ErrReadOnly", err)
 	}

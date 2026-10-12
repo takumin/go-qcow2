@@ -50,7 +50,7 @@ func TestPunchHole(t *testing.T) {
 		}
 		after := allocated(t, path)
 		size := fileSize(t, path)
-		img.Close()
+		closeImage(t, img)
 		qemuCheck(t, path)
 		if size != off+n*img.clusterSize {
 			t.Fatalf("file size changed to %d", size)
@@ -88,7 +88,7 @@ func TestDiscardReleasesSpace(t *testing.T) {
 	if img.noPunchHole {
 		t.Skip("file system does not support hole punching")
 	}
-	img.Close()
+	closeImage(t, img)
 	after := allocated(t, path)
 	t.Logf("allocated: %d -> %d bytes", full, after)
 	if released := full - after; released < 24<<20 {

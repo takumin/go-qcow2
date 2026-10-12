@@ -21,15 +21,21 @@ func qemuDirty(t *testing.T, path, name string) []Extent {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(dir)
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Error(err)
+		}
+	})
 	sock := filepath.Join(dir, "s")
 	nbd := exec.Command("qemu-nbd", "-r", "-f", "qcow2", "-B", name, "--socket="+sock, path)
 	if err := nbd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
-		nbd.Process.Kill()
-		nbd.Wait()
+		// qemu-nbd normally exits after its client; killing it is only a
+		// fallback, and Wait then reports the signal.
+		_ = nbd.Process.Kill()
+		_ = nbd.Wait()
 	}()
 	for i := 0; ; i++ {
 		if _, err := os.Stat(sock); err == nil {
@@ -144,7 +150,9 @@ func TestBitmapQemuInterop(t *testing.T) {
 	}
 	assertExtents(t, "b0 (qemu writes)", dirtyExtents(t, img, "b0"), b0.extents())
 	assertExtents(t, "b1 (qemu writes)", dirtyExtents(t, img, "b1"), b1.extents())
-	img.Close()
+	if err := img.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	// Writes through this package, read back by QEMU.
 	img, err = OpenFile(path, os.O_RDWR, nil)
@@ -230,8 +238,11 @@ func TestBitmapQemuInterop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	img.RemoveBitmap("b0")
-	img.RemoveBitmap("b2")
+	for _, name := range []string{"b0", "b2"} {
+		if err := img.RemoveBitmap(name); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := img.Close(); err != nil {
 		t.Fatal(err)
 	}

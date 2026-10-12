@@ -467,7 +467,7 @@ func checkCrashImage(dir, worker string, data []byte, rec *crashRecorder, what s
 	}
 	ours := make([]byte, img.Size())
 	_, err = img.ReadAt(ours, 0)
-	img.Close()
+	err = errors.Join(err, img.Close())
 	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("%s: %v", what, err)
 	}
@@ -522,7 +522,8 @@ func qemuLeakCount(path string) (int64, error) {
 
 func qemuRawErr(path string) ([]byte, error) {
 	raw := path + ".raw"
-	defer os.Remove(raw)
+	// Best effort: the file is missing when the conversion failed.
+	defer func() { _ = os.Remove(raw) }()
 	if out, err := exec.Command("qemu-img", "convert", "-O", "raw", path, raw).CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("qemu-img convert: %v\n%s", err, out)
 	}
@@ -532,12 +533,12 @@ func qemuRawErr(path string) ([]byte, error) {
 // checkAndRepair verifies that Check agrees with qemu-img check, then
 // repairs the leaks and verifies that qemu-img check is clean and the
 // guest data unchanged.
-func checkAndRepair(path string, qemuLeaks int64, data []byte) error {
+func checkAndRepair(path string, qemuLeaks int64, data []byte) (err error) {
 	img, err := OpenFile(path, os.O_RDWR, nil)
 	if err != nil {
 		return err
 	}
-	defer img.Close()
+	defer closeInto(img, &err)
 	res, err := img.Check()
 	if err != nil {
 		return err
@@ -579,7 +580,7 @@ func bitmapContents(t *testing.T, path string) map[string][]Extent {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer img.Close()
+	defer closeImage(t, img)
 	m := map[string][]Extent{}
 	for _, b := range img.Bitmaps() {
 		m[b.Name] = dirtyExtents(t, img, b.Name)
@@ -592,12 +593,12 @@ func bitmapContents(t *testing.T, path string) map[string][]Extent {
 // bitmap not in use marks every byte in which the guest disk differs from
 // its initial contents (all of a grown range counts as changed). Only
 // enabled bitmaps may be in use: guest writes never touch the others.
-func checkCrashBitmaps(path string, allowed map[string][][]Extent, initial, got []byte) error {
+func checkCrashBitmaps(path string, allowed map[string][][]Extent, initial, got []byte) (err error) {
 	img, err := Open(path)
 	if err != nil {
 		return err
 	}
-	defer img.Close()
+	defer closeInto(img, &err)
 	infos := img.Bitmaps()
 	if len(infos) != len(allowed) {
 		return fmt.Errorf("%d bitmaps, want %d", len(infos), len(allowed))

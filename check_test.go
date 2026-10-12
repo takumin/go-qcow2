@@ -48,7 +48,9 @@ func TestCheckQemuImages(t *testing.T) {
 				t.Fatal(err)
 			}
 			checkClean(t, img)
-			img.Close()
+			if err := img.Close(); err != nil {
+				t.Fatal(err)
+			}
 
 			// Opening writable keeps the bitmaps valid.
 			img, err = OpenFile(path, os.O_RDWR, nil)
@@ -140,7 +142,7 @@ func TestCheckLeaksAndCorruption(t *testing.T) {
 	if _, err := qemuLeakCount(path); err == nil || !strings.Contains(err.Error(), "exit status 2") {
 		t.Fatalf("qemu-img check did not report corruption: %v", err)
 	}
-	img.Close()
+	closeImage(t, img)
 }
 
 // TestFlushSyncs pins down how many syncs a flush needs.
@@ -154,7 +156,7 @@ func TestFlushSyncs(t *testing.T) {
 	if _, err := img.WriteAt(make([]byte, 4096), 0); err != nil {
 		t.Fatal(err)
 	}
-	img.Close()
+	closeImage(t, img)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

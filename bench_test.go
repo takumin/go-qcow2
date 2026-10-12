@@ -15,7 +15,11 @@ func benchDir(b *testing.B) string {
 		if err != nil {
 			b.Fatal(err)
 		}
-		b.Cleanup(func() { os.RemoveAll(dir) })
+		b.Cleanup(func() {
+			if err := os.RemoveAll(dir); err != nil {
+				b.Error(err)
+			}
+		})
 		return dir
 	}
 	return b.TempDir()
@@ -37,7 +41,11 @@ func BenchmarkFlush(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			defer img.Close()
+			b.Cleanup(func() {
+				if err := img.Close(); err != nil {
+					b.Error(err)
+				}
+			})
 			buf := make([]byte, 4096)
 			if !bc.allocate {
 				if _, err := img.WriteAt(buf, 0); err != nil {

@@ -63,6 +63,23 @@ func fileSize(t *testing.T, path string) int64 {
 	return fi.Size()
 }
 
+// closeImage closes img and fails the test on error.
+func closeImage(tb testing.TB, img *Image) {
+	tb.Helper()
+	if err := img.Close(); err != nil {
+		tb.Fatal(err)
+	}
+}
+
+// closeInto closes img and stores the error in *err unless it already holds
+// one. Use as defer closeInto(img, &err) with a named error result; an
+// image closed explicitly before returns ErrClosed, which is ignored.
+func closeInto(img *Image, err *error) {
+	if cerr := img.Close(); cerr != nil && !errors.Is(cerr, ErrClosed) && *err == nil {
+		*err = cerr
+	}
+}
+
 func readAll(t *testing.T, img *Image) []byte {
 	t.Helper()
 	buf := make([]byte, img.Size())
@@ -154,7 +171,7 @@ func TestCreateWriteRead(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer img.Close()
+			defer closeImage(t, img)
 			assertEqual(t, "reopened", readAll(t, img), shadow)
 		})
 	}
@@ -303,7 +320,7 @@ func TestBackingChain(t *testing.T) {
 	want := qemuRaw(t, mid)
 	assertEqual(t, "chain", readAll(t, img), want)
 	randomWrites(t, rand.New(rand.NewPCG(9, 9)), img, want, 40, 70<<10)
-	img.Close()
+	closeImage(t, img)
 	qemuCheck(t, top)
 	assertEqual(t, "qemu view", qemuRaw(t, top), want)
 }
@@ -349,7 +366,7 @@ func TestResize(t *testing.T) {
 	want = append(want, make([]byte, 39<<20+512)...)
 	randomWrites(t, rng, img, want, 40, 50<<10)
 	assertEqual(t, "after resize", readAll(t, img), want)
-	img.Close()
+	closeImage(t, img)
 	qemuCheck(t, path)
 	assertEqual(t, "qemu view", qemuRaw(t, path), want)
 
@@ -371,7 +388,7 @@ func TestResize(t *testing.T) {
 		want[i] = 0x99
 	}
 	assertEqual(t, "grown overlay", readAll(t, img), want)
-	img.Close()
+	closeImage(t, img)
 	qemuCheck(t, ov)
 	assertEqual(t, "qemu grown overlay", qemuRaw(t, ov), want)
 }
@@ -397,7 +414,7 @@ func TestSetBackingFile(t *testing.T) {
 	want := bytes.Repeat([]byte{0x61}, 4<<20)
 	copy(want[100:], "hello")
 	assertEqual(t, "rebased", readAll(t, img), want)
-	img.Close()
+	closeImage(t, img)
 
 	qemuCheck(t, path)
 	info := run(t, "qemu-img", "info", path)
@@ -413,7 +430,7 @@ func TestSetBackingFile(t *testing.T) {
 	if err := img.SetBackingFile("", ""); err != nil {
 		t.Fatal(err)
 	}
-	img.Close()
+	closeImage(t, img)
 	if strings.Contains(run(t, "qemu-img", "info", path), "backing file") {
 		t.Fatal("backing file not removed")
 	}
@@ -427,7 +444,7 @@ func TestReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer img.Close()
+	defer closeImage(t, img)
 	if _, err := img.WriteAt([]byte{1}, 0); err != ErrReadOnly {
 		t.Fatalf("got %v, want ErrReadOnly", err)
 	}
@@ -439,7 +456,9 @@ func TestReadOnly(t *testing.T) {
 
 func TestNotQcow2(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "x.raw")
-	os.WriteFile(path, make([]byte, 4096), 0o644)
+	if err := os.WriteFile(path, make([]byte, 4096), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := Open(path); !errors.Is(err, ErrNotQcow2) {
 		t.Fatalf("got %v", err)
 	}
@@ -491,12 +510,16 @@ func TestAllocReuse(t *testing.T) {
 	}
 	// Release everything again so that qemu-img check sees no leaks.
 	for i := int64(0); i < 10; i++ {
-		img.addRefcount(first+i*cs, -1)
+		if err := img.addRefcount(first+i*cs, -1); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for i := int64(0); i < 6; i++ {
-		img.addRefcount(big+i*cs, -1)
+		if err := img.addRefcount(big+i*cs, -1); err != nil {
+			t.Fatal(err)
+		}
 	}
-	img.Close()
+	closeImage(t, img)
 	qemuCheck(t, path)
 }
 

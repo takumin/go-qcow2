@@ -32,7 +32,7 @@ func TestRealImage(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer img.Close()
+		defer closeImage(t, img)
 		t.Logf("version %d, cluster size %d, virtual size %d", img.Version(), img.ClusterSize(), img.Size())
 		compareWithQemu(t, img, src)
 	})
@@ -60,7 +60,7 @@ func TestRealImage(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer img.Close()
+		defer closeImage(t, img)
 		compareWithQemu(t, img, path)
 		// Backing file untouched.
 		run(t, "qemu-img", "check", src)
@@ -83,7 +83,7 @@ func TestRealImage(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer img.Close()
+		defer closeImage(t, img)
 		compareWithQemu(t, img, path)
 	})
 }
@@ -126,7 +126,7 @@ func compareWithQemu(t *testing.T, img *Image, path string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only
 	if fi, _ := f.Stat(); fi.Size() != img.Size() {
 		t.Fatalf("size %d, qemu %d", img.Size(), fi.Size())
 	}
@@ -152,7 +152,7 @@ func copyFile(t *testing.T, src, dst string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }() // read-only
 	out, err := os.Create(dst)
 	if err != nil {
 		t.Fatal(err)
