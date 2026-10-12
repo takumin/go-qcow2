@@ -19,6 +19,11 @@ func allocated(t *testing.T, path string) int64 {
 	return st.Blocks * 512
 }
 
+// punchSlack is how far the released space may fall short of the punched
+// range. Punching a hole can split extents, and the file system may then
+// allocate blocks for its own extent tree, which count towards st_blocks.
+const punchSlack = 64 << 10
+
 func TestPunchHole(t *testing.T) {
 	requireQemu(t)
 	for _, noPunch := range []bool{false, true} {
@@ -59,8 +64,8 @@ func TestPunchHole(t *testing.T) {
 		if noPunch && released != 0 {
 			t.Fatalf("NoPunchHole: %d bytes released", released)
 		}
-		if !noPunch && released < int64(len(data)) {
-			t.Fatalf("released %d bytes, want at least %d", released, len(data))
+		if !noPunch && released < int64(len(data))-punchSlack {
+			t.Fatalf("released %d bytes, want at least %d", released, int64(len(data))-punchSlack)
 		}
 	}
 }
@@ -91,8 +96,8 @@ func TestDiscardReleasesSpace(t *testing.T) {
 	closeImage(t, img)
 	after := allocated(t, path)
 	t.Logf("allocated: %d -> %d bytes", full, after)
-	if released := full - after; released < 24<<20 {
-		t.Fatalf("released %d bytes, want at least %d", released, 24<<20)
+	if released := full - after; released < 24<<20-punchSlack {
+		t.Fatalf("released %d bytes, want at least %d", released, 24<<20-punchSlack)
 	}
 	qemuCheck(t, path)
 	clear(data[4<<20 : 28<<20])
