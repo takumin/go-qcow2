@@ -1,0 +1,9 @@
+*.go text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.jq text eol=lf
+*.just text eol=lf
+Justfile text eol=lf
