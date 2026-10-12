@@ -135,6 +135,23 @@ corruptions, including wrong COPIED flags. `RepairLeaks` lowers leaked
 refcounts so the clusters get reused or punched out; it refuses to touch an
 image with corruptions.
 
+## Development
+
+Tools (Go, just, linters) are pinned with [aqua](https://aquaproj.github.io/)
+in `.aqua/`; recipes live in `Justfile` and `.just/`. CI runs the same recipes.
+
+```sh
+just                 # tools, format, lint, test, build
+just format          # go mod tidy, gofmt, yamlfmt, pinact, just --fmt
+just reviewdog       # golangci-lint, gosec, editorconfig-checker, yamllint, biome,
+                     # jactionlint, ghalint, zizmor, Renovate config schema
+just test            # go test -race -short (needs qemu-img, qemu-io, qemu-nbd)
+just test crash      # full crash-consistency simulation
+just coverage        # coverage report in coverage/
+just audit           # govulncheck
+just build           # compile for linux/darwin/windows × amd64/arm64
+```
+
 ## Testing
 
 Tests use `qemu-img` and `qemu-io` as the reference implementation (they are
