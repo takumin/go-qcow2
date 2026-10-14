@@ -13,7 +13,9 @@ import "github.com/takumin/go-qcow2"
   (`WriteCompressedAt`, like `qemu-img convert -c`)
 - zero clusters
 - backing files (qcow2 or raw) and backing chains, relative names resolved like QEMU
-- creating images, growing images, changing the backing file (`qemu-img rebase -u`)
+- creating images (zlib or zstd compression, lazy refcounts, preallocation
+  `metadata` / `falloc` / `full`), growing images, changing the backing file
+  (`qemu-img rebase -u`)
 - internal snapshots: listed, created, applied and deleted (like `qemu-img snapshot`);
   writes keep them intact (copy-on-write for shared clusters)
 - clusters freed by copy-on-write (or by deleting snapshots) are reused for new allocations,
@@ -64,6 +66,17 @@ for _, e := range entries {
 (`Depth`), whether it reads as zeros (`Zero`), whether it is stored as data
 (`Data`, `Compressed`) and where (`HostOffset`), like
 `qemu-img map --output=json`.
+
+Create a fully preallocated image, like
+`qemu-img create -f qcow2 -o preallocation=falloc,compression_type=zstd`:
+
+```go
+img, err := qcow2.Create("data.qcow2", qcow2.CreateOptions{
+	Size:            100 << 30,
+	Preallocation:   qcow2.PreallocFalloc,
+	CompressionType: "zstd",
+})
+```
 
 Create an overlay backed by the cloud image, grow it and write to it:
 

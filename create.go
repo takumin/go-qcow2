@@ -34,6 +34,20 @@ type CreateOptions struct {
 	// the backing file and recorded in the image.
 	BackingFormat string
 
+	// CompressionType is the algorithm of compressed clusters, "zlib" or
+	// "zstd" (version 3 only). Default: zlib.
+	CompressionType string
+
+	// LazyRefcounts sets the lazy_refcounts compatible feature (version 3
+	// only), so that QEMU may defer refcount updates. This package always
+	// updates refcounts right away.
+	LazyRefcounts bool
+
+	// Preallocation is one of PreallocOff (the default), PreallocMetadata,
+	// PreallocFalloc and PreallocFull. It cannot be combined with a
+	// backing file.
+	Preallocation string
+
 	// NoPunchHole and WriteThrough have the same meaning as in Options.
 	NoPunchHole  bool
 	WriteThrough bool
@@ -81,6 +95,24 @@ func validateCreateOptions(opts *CreateOptions) error {
 	}
 	if opts.Size < 0 {
 		return fmt.Errorf("qcow2: invalid size %d", opts.Size)
+	}
+	switch opts.CompressionType {
+	case "", "zlib":
+	case "zstd":
+		if opts.Version < 3 {
+			return errors.New("qcow2: zstd compression needs a version 3 image")
+		}
+	default:
+		return fmt.Errorf("qcow2: invalid compression type %q", opts.CompressionType)
+	}
+	if opts.LazyRefcounts && opts.Version < 3 {
+		return errors.New("qcow2: lazy refcounts need a version 3 image")
+	}
+	if err := validPrealloc(opts.Preallocation); err != nil {
+		return err
+	}
+	if opts.Preallocation != "" && opts.Preallocation != PreallocOff && opts.BackingFile != "" {
+		return errors.New("qcow2: preallocation cannot be combined with a backing file")
 	}
 	return nil
 }
@@ -143,6 +175,13 @@ func create(f storage, name string, opts CreateOptions, backing Backing) (*Image
 	if opts.Version == 3 {
 		h.HeaderLength = v3HeaderLength
 	}
+	if opts.CompressionType == "zstd" {
+		h.CompressionType = compressionZstd
+		h.IncompatibleFeatures |= incompatCompressionType
+	}
+	if opts.LazyRefcounts {
+		h.CompatibleFeatures |= compatLazyRefcounts
+	}
 	img := &Image{
 		f: f, name: name, backing: backing, noPunchHole: opts.NoPunchHole,
 		opts: Options{NoPunchHole: opts.NoPunchHole, WriteThrough: opts.WriteThrough},
@@ -187,6 +226,12 @@ func create(f storage, name string, opts CreateOptions, backing Backing) (*Image
 	img.l1Offset = off
 	h.L1Size = uint32(l1Size)
 	h.L1TableOffset = uint64(off)
+
+	if opts.Preallocation != "" && opts.Preallocation != PreallocOff {
+		if err := img.preallocate(opts.Preallocation); err != nil {
+			return nil, err
+		}
+	}
 
 	// Write all metadata, then the header: until the header is complete
 	// the file is not a qcow2 image at all.

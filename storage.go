@@ -95,6 +95,8 @@ func (s fileStorage) Sync() error { return datasync(s.File) }
 
 func (s fileStorage) punchHole(off, n int64) error { return punchHole(s.File, off, n) }
 
+func (s fileStorage) allocate(off, n int64) error { return allocate(s.File, off, n) }
+
 // userStorage adapts a Storage.
 type userStorage struct{ Storage }
 
