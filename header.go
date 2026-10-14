@@ -13,11 +13,12 @@ const (
 	v3HeaderLength = 112 // up to and including compression_type + padding
 
 	// Header field offsets (shared by v2 and v3).
-	offSize                = 24
-	offL1Size              = 36
-	offL1TableOffset       = 40
-	offRefcountTableOffset = 48
-	offAutoclearFeatures   = 88
+	offSize                 = 24
+	offL1Size               = 36
+	offL1TableOffset        = 40
+	offRefcountTableOffset  = 48
+	offIncompatibleFeatures = 72
+	offAutoclearFeatures    = 88
 
 	extEnd                = 0x00000000
 	extBackingFormat      = 0xe2792aca

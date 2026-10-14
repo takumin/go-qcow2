@@ -20,7 +20,9 @@ import "github.com/takumin/go-qcow2"
 - `Discard` (TRIM/UNMAP): the range reads as zeros and its clusters are released
 - persistent dirty bitmaps: maintained on writes, listed, read as dirty extents,
   added, removed, cleared, enabled and disabled
-- crash-consistent metadata updates, `Check` and `RepairLeaks`
+- crash-consistent metadata updates, `Check`, `RepairLeaks` and `Repair`
+  (like `qemu-img check -r leaks` / `-r all`); images left dirty by QEMU's
+  lazy refcounts are repaired when opened writable
 - `Map`: how each range is stored across the backing chain (like `qemu-img map`),
   for sparse copies
 - `*qcow2.Image` implements `io.ReaderAt` and `io.WriterAt`
@@ -165,24 +167,39 @@ the next flush.
 If the process or the machine crashes at any point, the image is never
 corrupt: it holds everything written before the last successful `Flush`
 (ranges written afterwards may hold old or new data), and at worst some
-clusters are leaked. Call `Flush` when writes must be durable, or set
+clusters are leaked (or, during snapshot operations, COPIED flags are
+missing; see below). Call `Flush` when writes must be durable, or set
 `Options.WriteThrough` to flush after every call.
 
 `Close` additionally truncates unreferenced clusters from the end of the
 file.
 
-### Checking and repairing leaks
+### Checking and repairing
 
 ```go
 res, err := img.Check()          // like qemu-img check
 n, err := img.RepairLeaks()      // like qemu-img check -r leaks
+res, err := img.Repair()         // like qemu-img check -r all
 ```
 
 `Check` recomputes every refcount from the metadata (L1/L2 tables, refcount
 structures, internal snapshots, persistent bitmaps) and reports leaks and
 corruptions, including wrong COPIED flags. `RepairLeaks` lowers leaked
-refcounts so the clusters get reused or punched out; it refuses to touch an
-image with corruptions.
+refcounts so the clusters get reused or punched out, and sets the COPIED
+flags of clusters left with a single reference; it refuses to touch an image
+with other corruptions. `Repair` fixes every refcount (also those that are
+too low or lack a refcount block) and every COPIED flag, and clears the
+dirty and corrupt flags of the header. It refuses images whose metadata
+itself is broken (invalid offsets or tables).
+
+Like QEMU, opening an image left dirty by lazy refcounts writable repairs
+it. Images marked corrupt can be opened writable only with
+`Options.Repair`, which repairs them first.
+
+A crash while a snapshot is created or deleted can leave COPIED flags
+missing on clusters with a single reference, as in QEMU. `qemu-img check`
+reports them as errors, but they are harmless (the clusters are copied on
+the next write) and `RepairLeaks` fixes them.
 
 ## Development
 
@@ -214,8 +231,10 @@ go test ./...
 QCOW2_TEST_IMAGE=/path/to/ubuntu-26.04-server-cloudimg-amd64.img go test -run TestRealImage -v
 ```
 
-`TestCrashConsistency` simulates crashes at every storage operation performed
-while flushing (and at a sample of the others), both as a process crash and as
+`TestCrashConsistency` runs writes, discards, a resize and, on images with
+snapshots, snapshot creation, application and deletion. It simulates crashes
+at every storage operation performed while flushing (and at a sample of the
+others), both as a process crash and as
 a power loss that keeps an arbitrary subset of the unsynced sectors, and checks
 every resulting image with `qemu-img check` and against the last flushed data.
 It also verifies that `Check` reports the same leaks as `qemu-img check` and

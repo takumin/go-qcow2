@@ -25,8 +25,19 @@ type CheckResult struct {
 	Errors []string
 
 	leaks []leak
+	// under lists clusters with fewer references counted than exist.
+	under []leak
+	// unfixable counts corruptions Repair cannot fix: invalid offsets and
+	// tables.
+	unfixable int64
+	// missingCopied counts COPIED flags missing on clusters with a
+	// refcount of 1. QEMU reports them as corruptions, but they are
+	// harmless: such clusters are copied on write instead of being
+	// overwritten in place.
+	missingCopied int64
 }
 
+// leak is a cluster whose refcount is off by n.
 type leak struct {
 	off    int64
 	excess uint64
@@ -41,6 +52,20 @@ func (r *CheckResult) corrupt(format string, args ...any) {
 	}
 }
 
+// copiedMismatch records a COPIED flag that does not match refcount n.
+func (r *CheckResult) copiedMismatch(n uint64, format string, args ...any) {
+	if n == 1 {
+		r.missingCopied++
+	}
+	r.corrupt(format, args...)
+}
+
+// broken records a corruption Repair cannot fix.
+func (r *CheckResult) broken(format string, args ...any) {
+	r.unfixable++
+	r.corrupt(format, args...)
+}
+
 // Check recomputes the refcount of every cluster from the image metadata
 // (header, L1/L2 tables, refcount structures, internal snapshots and
 // persistent bitmaps) and compares it with the stored refcounts. Pending
@@ -51,14 +76,16 @@ func (img *Image) Check() (*CheckResult, error) {
 	if img.closed {
 		return nil, ErrClosed
 	}
-	return img.check()
+	res, _, err := img.check()
+	return res, err
 }
 
 // RepairLeaks lowers the refcount of leaked clusters to their actual number
 // of references, making them available for reuse (and punching them out of
-// the file). It refuses to touch an image with corruptions. Only leaked
-// clusters are written, so a crash during the repair is harmless. It
-// returns the number of clusters repaired (Leaks + LeaksPastEOF).
+// the file), and then sets the COPIED flags of clusters it left with a
+// single reference. It refuses to touch an image with corruptions other
+// than missing COPIED flags; see Repair. A crash during the repair is harmless. It returns the number of
+// clusters repaired (Leaks + LeaksPastEOF).
 func (img *Image) RepairLeaks() (int64, error) {
 	img.mu.Lock()
 	defer img.mu.Unlock()
@@ -68,17 +95,25 @@ func (img *Image) RepairLeaks() (int64, error) {
 	if img.readOnly {
 		return 0, ErrReadOnly
 	}
-	res, err := img.check()
+	res, _, err := img.check()
 	if err != nil {
 		return 0, err
 	}
-	if res.Corruptions > 0 {
+	if res.Corruptions > res.missingCopied {
 		return 0, fmt.Errorf("%w: %d corruptions found, not repairing (first: %s)", ErrCorrupt, res.Corruptions, res.Errors[0])
 	}
 	for _, l := range res.leaks {
 		if err := img.addRefcount(l.off, -int64(l.excess)); err != nil {
 			return 0, err
 		}
+	}
+	if err := img.flushAll(); err != nil {
+		return 0, err
+	}
+	// Clusters that were shared with a snapshot whose deletion was cut
+	// short may now be owned by the active image alone.
+	if err := img.syncCopiedFlags(); err != nil {
+		return 0, err
 	}
 	return int64(len(res.leaks)), img.flushAll()
 }
@@ -98,7 +133,7 @@ func (rc *refCounter) ref(what string, off, n int64) {
 	}
 	for c := off >> img.clusterBits; c <= (off+n-1)>>img.clusterBits; c++ {
 		if c >= int64(len(rc.refs)) {
-			rc.res.corrupt("%s at 0x%x is beyond the end of the file", what, c<<img.clusterBits)
+			rc.res.broken("%s at 0x%x is beyond the end of the file", what, c<<img.clusterBits)
 			return
 		}
 		rc.refs[c]++
@@ -107,21 +142,21 @@ func (rc *refCounter) ref(what string, off, n int64) {
 
 func (rc *refCounter) aligned(what string, off int64) bool {
 	if off&(rc.img.clusterSize-1) != 0 {
-		rc.res.corrupt("%s offset 0x%x is not cluster aligned", what, off)
+		rc.res.broken("%s offset 0x%x is not cluster aligned", what, off)
 		return false
 	}
 	return true
 }
 
-func (img *Image) check() (*CheckResult, error) {
+func (img *Image) check() (*CheckResult, *refCounter, error) {
 	if !img.readOnly {
 		if err := img.flushAll(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	fileSize, err := img.f.size()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	res := &CheckResult{}
 	rc := &refCounter{img: img, refs: make([]uint64, alignUp(fileSize, img.clusterSize)>>img.clusterBits), res: res}
@@ -140,19 +175,19 @@ func (img *Image) check() (*CheckResult, error) {
 	// Active L1 table, with COPIED flags checked afterwards.
 	rc.ref("L1 table", img.l1Offset, int64(len(img.l1))*8)
 	if err := rc.walkL1(img.l1, "active"); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Internal snapshots.
 	if err := rc.walkSnapshots(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Persistent bitmaps, which QEMU only honours while the autoclear bit
 	// is set (opening an image writable clears it).
 	if img.hdr.AutoclearFeatures&1 != 0 {
 		if err := rc.walkBitmaps(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -165,7 +200,7 @@ func (img *Image) check() (*CheckResult, error) {
 		}
 		b, err := img.loadRefBlock(blk)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for bi := int64(0); bi < img.refsPerBlock; bi++ {
 			c := int64(ti)*img.refsPerBlock + bi
@@ -185,19 +220,21 @@ func (img *Image) check() (*CheckResult, error) {
 				res.leaks = append(res.leaks, leak{off: c << img.clusterBits, excess: stored - want})
 			case stored < want:
 				res.corrupt("cluster 0x%x has refcount %d but %d references", c<<img.clusterBits, stored, want)
+				res.under = append(res.under, leak{off: c << img.clusterBits, excess: want - stored})
 			}
 		}
 	}
 	for c, n := range rc.refs {
 		if n > 0 && !covered[c] {
 			res.corrupt("cluster 0x%x has %d references but no refcount block", int64(c)<<img.clusterBits, n)
+			res.under = append(res.under, leak{off: int64(c) << img.clusterBits, excess: n})
 		}
 	}
 
 	if err := img.checkCopied(res); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return res, nil
+	return res, rc, nil
 }
 
 // walkL1 records the references of an L1 table: its L2 tables and the data
@@ -251,7 +288,7 @@ func (rc *refCounter) walkSnapshots() error {
 
 		name := fmt.Sprintf("snapshot %d", i)
 		if l1Size > 32<<20/8 {
-			rc.res.corrupt("%s: L1 table too large", name)
+			rc.res.broken("%s: L1 table too large", name)
 			continue
 		}
 		if !rc.aligned(name+" L1 table", l1Off) {
@@ -286,7 +323,7 @@ func (rc *refCounter) walkBitmaps() error {
 	dirSize := int64(be.Uint64(ext[8:]))
 	dirOff := int64(be.Uint64(ext[16:]))
 	if dirSize > 64<<20 {
-		rc.res.corrupt("bitmap directory too large")
+		rc.res.broken("bitmap directory too large")
 		return nil
 	}
 	rc.ref("bitmap directory", dirOff, dirSize)
@@ -329,7 +366,7 @@ func (img *Image) checkCopied(res *CheckResult) error {
 			return err
 		}
 		if (n == 1) != (e&flagCopied != 0) {
-			res.corrupt("L2 table %d at 0x%x: COPIED flag does not match refcount %d", i, l2, n)
+			res.copiedMismatch(n, "L2 table %d at 0x%x: COPIED flag does not match refcount %d", i, l2, n)
 		}
 		t, err := img.loadL2(l2)
 		if err != nil {
@@ -346,7 +383,7 @@ func (img *Image) checkCopied(res *CheckResult) error {
 				return err
 			}
 			if (n == 1) != (entry&flagCopied != 0) {
-				res.corrupt("data cluster at 0x%x: COPIED flag does not match refcount %d", host, n)
+				res.copiedMismatch(n, "data cluster at 0x%x: COPIED flag does not match refcount %d", host, n)
 			}
 		}
 	}

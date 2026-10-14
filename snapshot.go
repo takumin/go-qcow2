@@ -192,16 +192,15 @@ func (img *Image) CreateSnapshot(name string) (SnapshotInfo, error) {
 	}
 
 	// Share everything the active L1 table reaches with the snapshot.
-	// The raised refcounts and cleared COPIED flags reach the disk before
-	// the snapshot does; a crash in between merely leaks clusters.
-	if err := img.addL1Refcounts(img.l1); err != nil {
+	// The COPIED flags go first: a missing flag only costs a copy on the
+	// next write, while a flag on a cluster with more than one reference
+	// is a corruption. The raised refcounts reach the disk before the
+	// snapshot does; a crash in between merely leaks clusters.
+	if err := img.clearCopiedFlags(); err != nil {
 		return SnapshotInfo{}, err
 	}
-	for i, e := range img.l1 {
-		if e&flagCopied != 0 {
-			img.l1[i] = e &^ flagCopied
-			img.l1Dirty[int64(i)] = struct{}{}
-		}
+	if err := img.addL1Refcounts(img.l1); err != nil {
+		return SnapshotInfo{}, err
 	}
 	var l1Off int64
 	if len(img.l1) > 0 {
@@ -283,7 +282,7 @@ func (img *Image) DeleteSnapshot(idOrName string) error {
 	}
 	// Clusters the active image now owns alone may be written in place
 	// again.
-	if err := img.setCopiedFlags(); err != nil {
+	if err := img.syncCopiedFlags(); err != nil {
 		return err
 	}
 	return img.flushAll()
@@ -357,6 +356,39 @@ func (img *Image) ApplySnapshot(idOrName string) error {
 	img.hdrDirty = true
 	if err := img.releaseL1(oldL1, oldOff); err != nil {
 		return err
+	}
+	return img.flushAll()
+}
+
+// clearCopiedFlags clears the COPIED flags of the active L1 and L2 entries
+// and flushes.
+func (img *Image) clearCopiedFlags() error {
+	for i, e := range img.l1 {
+		l2 := int64(e & l1OffsetMask)
+		if l2 == 0 {
+			continue
+		}
+		if e&flagCopied != 0 {
+			img.l1[i] = e &^ flagCopied
+			img.l1Dirty[int64(i)] = struct{}{}
+		}
+		t, err := img.loadL2(l2)
+		if err != nil {
+			return err
+		}
+		changed := false
+		for j := 0; j < len(t); j += 8 {
+			if entry := binary.BigEndian.Uint64(t[j:]); entry&flagCopied != 0 {
+				binary.BigEndian.PutUint64(t[j:], entry&^flagCopied)
+				changed = true
+			}
+		}
+		if changed {
+			img.l2Cache.markDirty(l2, t)
+		}
+		if err := img.maybeFlush(); err != nil {
+			return err
+		}
 	}
 	return img.flushAll()
 }
@@ -477,54 +509,6 @@ func (img *Image) forEntryClusters(entry uint64, fn func(int64) error) error {
 	}
 	if host := int64(entry & l2OffsetMask); host != 0 {
 		return fn(host)
-	}
-	return nil
-}
-
-// setCopiedFlags sets the COPIED flag of the active L1 and L2 entries
-// whose cluster has a refcount of 1, so that they are written in place
-// again.
-func (img *Image) setCopiedFlags() error {
-	for i, e := range img.l1 {
-		l2 := int64(e & l1OffsetMask)
-		if l2 == 0 {
-			continue
-		}
-		n, err := img.refcount(l2)
-		if err != nil {
-			return err
-		}
-		if n != 1 {
-			continue
-		}
-		if e&flagCopied == 0 {
-			img.l1[i] = e | flagCopied
-			img.l1Dirty[int64(i)] = struct{}{}
-		}
-		t, err := img.loadL2(l2)
-		if err != nil {
-			return err
-		}
-		changed := false
-		for j := 0; j < len(t); j += 8 {
-			entry := binary.BigEndian.Uint64(t[j:])
-			host := int64(entry & l2OffsetMask)
-			if entry&(flagCompressed|flagCopied) != 0 || host == 0 {
-				continue
-			}
-			if n, err := img.refcount(host); err != nil {
-				return err
-			} else if n == 1 {
-				binary.BigEndian.PutUint64(t[j:], entry|flagCopied)
-				changed = true
-			}
-		}
-		if changed {
-			img.l2Cache.markDirty(l2, t)
-		}
-		if err := img.maybeFlush(); err != nil {
-			return err
-		}
 	}
 	return nil
 }
