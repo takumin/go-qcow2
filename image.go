@@ -4,8 +4,8 @@
 //
 //   - qcow2 version 2 and 3, cluster sizes from 512 bytes to 2 MiB
 //   - every refcount width (refcount_order 0-6)
-//   - zlib and zstd compressed clusters (read; writes decompress the cluster
-//     into a freshly allocated one)
+//   - zlib and zstd compressed clusters (WriteCompressedAt writes them;
+//     other writes decompress the cluster into a freshly allocated one)
 //   - zero clusters (version 3)
 //   - backing files (qcow2 or raw), including chains of backing files
 //   - internal snapshots: writes honour the COPIED flag and perform
@@ -32,6 +32,9 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/klauspost/compress/flate"
+	"github.com/klauspost/compress/zstd"
 )
 
 var (
@@ -171,6 +174,12 @@ type Image struct {
 
 	decompEntry uint64
 	decompBuf   []byte
+
+	// Compressed writes; see compress.go. compPos is the next free byte
+	// of the cluster compressed clusters are packed into, or 0.
+	compPos     int64
+	zlibWriter  *flate.Writer
+	zstdEncoder *zstd.Encoder
 }
 
 // Open opens an image read-only.
@@ -489,6 +498,9 @@ func (img *Image) Close() error {
 			err = img.truncateFile()
 		}
 		errs = append(errs, err)
+	}
+	if img.zstdEncoder != nil {
+		errs = append(errs, img.zstdEncoder.Close())
 	}
 	errs = append(errs, img.f.Close())
 	if img.backing != nil {

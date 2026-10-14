@@ -217,6 +217,9 @@ func (img *Image) freed(host int64) error {
 	img.l2Cache.remove(host)
 	img.refCache.remove(host)
 	img.decompBuf = nil
+	if img.compPos&^(img.clusterSize-1) == host {
+		img.compPos = 0
+	}
 	if img.noPunchHole {
 		return nil
 	}
