@@ -527,21 +527,28 @@ func (img *Image) ReadAt(p []byte, off int64) (int, error) {
 		p = p[:img.size-off]
 		eof = io.EOF
 	}
-	done := 0
-	for done < len(p) {
+	if err := img.readLocked(p, off); err != nil {
+		return 0, err
+	}
+	return len(p), eof
+}
+
+// readLocked reads guest data; [off, off+len(p)) must lie within the disk.
+func (img *Image) readLocked(p []byte, off int64) error {
+	for done := 0; done < len(p); {
 		g := off + int64(done)
 		in := g & (img.clusterSize - 1)
 		n := int(min(img.clusterSize-in, int64(len(p)-done)))
 		entry, err := img.l2Entry(g)
 		if err != nil {
-			return done, err
+			return err
 		}
 		if err := img.readFromEntry(entry, g, p[done:done+n]); err != nil {
-			return done, err
+			return err
 		}
 		done += n
 	}
-	return done, eof
+	return nil
 }
 
 // WriteAt writes p to the guest disk at off. Writes beyond the virtual

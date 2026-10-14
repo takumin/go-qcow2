@@ -14,8 +14,10 @@ import "github.com/takumin/go-qcow2"
 - zero clusters
 - backing files (qcow2 or raw) and backing chains, relative names resolved like QEMU
 - creating images (zlib or zstd compression, lazy refcounts, preallocation
-  `metadata` / `falloc` / `full`), growing images, changing the backing file
-  (`qemu-img rebase -u`)
+  `metadata` / `falloc` / `full`), growing images
+- changing the backing file, with (`qemu-img rebase`) or without
+  (`qemu-img rebase -u`) copying what differs; committing into the backing file
+  (`qemu-img commit -d`)
 - internal snapshots: listed, created, applied and deleted (like `qemu-img snapshot`);
   writes keep them intact (copy-on-write for shared clusters)
 - clusters freed by copy-on-write (or by deleting snapshots) are reused for new allocations,
@@ -118,6 +120,16 @@ need no allocation (like `write_zeroes` without `MAY_UNMAP` in QEMU):
 
 ```go
 err := img.WriteZeroes(offset, length, false)
+```
+
+Switch the overlay to another backing file without changing what the guest
+sees, or flatten it, like `qemu-img rebase`; or write its changes into the
+backing file, like `qemu-img commit -d`:
+
+```go
+err = img.Rebase("ubuntu-26.04-updated.img", "qcow2") // copies the clusters that differ
+err = img.Rebase("", "")                              // no backing file any more
+err = img.Commit()                                    // the overlay is left as is
 ```
 
 Modify an existing image in place:
