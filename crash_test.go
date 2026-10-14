@@ -237,6 +237,21 @@ func runCrashWorkload(img *Image, seed uint64, rec *crashRecorder, snapshots boo
 				return err
 			}
 			rec.shadow = append(rec.shadow, make([]byte, newSize-size)...)
+		case k == 11:
+			// Compressed clusters, packed into shared host clusters.
+			n := 1 + rng.Int64N(4)
+			off := rng.Int64N(size/cs-n) * cs
+			data := make([]byte, n*cs)
+			for i := range data {
+				if i%64 == 0 || rng.IntN(2) == 0 {
+					data[i] = byte(rng.Uint32())
+				}
+			}
+			rec.touch(off, off+n*cs)
+			if _, err := img.WriteCompressedAt(data, off); err != nil {
+				return err
+			}
+			copy(rec.shadow[off:], data)
 		case k < 12:
 			l := 1 + rng.Int64N(128<<10)
 			off := rng.Int64N(size - l)
