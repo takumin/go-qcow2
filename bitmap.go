@@ -452,7 +452,15 @@ func (img *Image) resizeBitmaps() error {
 			return err
 		}
 		n := img.bitmapBytes(b.granBits)
-		b.bits = append(b.bits, make([]byte, n-int64(len(b.bits)))...)
+		if n <= int64(len(b.bits)) {
+			// Shrunk: drop the bits past the end.
+			b.bits = b.bits[:n]
+			if nbits := (img.size + int64(1)<<b.granBits - 1) >> b.granBits; nbits%8 != 0 {
+				b.bits[n-1] &= byte(1)<<(nbits%8) - 1
+			}
+		} else {
+			b.bits = append(b.bits, make([]byte, n-int64(len(b.bits)))...)
+		}
 		b.changed = true
 		img.bitmapsChanged = true
 	}

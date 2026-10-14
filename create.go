@@ -252,7 +252,7 @@ func create(f storage, name string, opts CreateOptions, backing Backing) (*Image
 }
 
 // Resize grows the virtual disk to size bytes (rounded up to a multiple of
-// 512). Shrinking is not supported.
+// 512). Use Shrink to make it smaller.
 // When the image is grown over a range that is still covered by a larger
 // backing file, that range is explicitly zeroed so that it reads as zeros,
 // like qemu-img resize does.
@@ -267,7 +267,7 @@ func (img *Image) Resize(size int64) error {
 	}
 	size = alignUp(size, 512)
 	if size < img.size {
-		return fmt.Errorf("%w: shrinking", ErrUnsupported)
+		return fmt.Errorf("%w: shrinking with Resize; use Shrink", ErrUnsupported)
 	}
 	if size == img.size {
 		return nil

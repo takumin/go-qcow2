@@ -198,8 +198,8 @@ func (r *crashRecorder) flushedOK() {
 }
 
 // runCrashWorkload runs a deterministic sequence of writes (some
-// compressed), zeroing (with and without unmapping), flushes and one
-// resize, stopping at the first error. With snapshots it
+// compressed), zeroing (with and without unmapping), flushes, one resize
+// and one shrink, stopping at the first error. With snapshots it
 // also creates, applies and deletes snapshots; the image must then have a
 // snapshot named "snap".
 func runCrashWorkload(img *Image, seed uint64, rec *crashRecorder, snapshots bool) error {
@@ -230,6 +230,14 @@ func runCrashWorkload(img *Image, seed uint64, rec *crashRecorder, snapshots boo
 			}
 			rec.shadow = bytes.Clone(w1)
 			rec.flushedOK()
+		case step == 60:
+			newSize := alignUp(size-1<<20-300, 512)
+			rec.touch(newSize, size)
+			rec.sizes = append(rec.sizes, newSize)
+			if err := img.Shrink(newSize); err != nil {
+				return err
+			}
+			rec.shadow = rec.shadow[:newSize]
 		case step == 50:
 			newSize := size + 2<<20
 			rec.touch(size, newSize)

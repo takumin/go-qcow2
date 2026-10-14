@@ -11,7 +11,8 @@
 //   - internal snapshots: writes honour the COPIED flag and perform
 //     copy-on-write for clusters shared with snapshots; snapshots can be
 //     listed, created, applied and deleted (see Snapshots)
-//   - creating images, growing images and changing the backing file
+//   - creating, growing, shrinking and amending images; changing, rebasing
+//     and committing into the backing file
 //   - persistent dirty bitmaps: kept up to date on writes, readable and
 //     manageable (see Bitmaps and DirtyExtents)
 //   - the layout of the guest disk across the backing chain (see Map)
