@@ -13,6 +13,7 @@
 //   - creating images, growing images and changing the backing file
 //   - persistent dirty bitmaps: kept up to date on writes, readable and
 //     manageable (see Bitmaps and DirtyExtents)
+//   - the layout of the guest disk across the backing chain (see Map)
 //
 // Not supported: encryption, external data files and extended L2 entries
 // (subclusters).
@@ -47,6 +48,7 @@ var (
 	ErrOutOfRange = errors.New("qcow2: access beyond end of virtual disk")
 
 	errPunchUnsupported = errors.New("qcow2: hole punching not supported")
+	errSeekUnsupported  = errors.New("qcow2: SEEK_DATA not supported")
 )
 
 const (
