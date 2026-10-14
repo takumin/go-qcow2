@@ -15,6 +15,8 @@ import "github.com/takumin/go-qcow2"
 - backing files (qcow2 or raw) and backing chains, relative names resolved like QEMU
 - creating images (zlib or zstd compression, lazy refcounts, preallocation
   `metadata` / `falloc` / `full`), growing images
+- changing the version (2 ↔ 3), the refcount width and lazy refcounts of an
+  existing image (`qemu-img amend`)
 - changing the backing file, with (`qemu-img rebase`) or without
   (`qemu-img rebase -u`) copying what differs; committing into the backing file
   (`qemu-img commit -d`)
@@ -130,6 +132,13 @@ backing file, like `qemu-img commit -d`:
 err = img.Rebase("ubuntu-26.04-updated.img", "qcow2") // copies the clusters that differ
 err = img.Rebase("", "")                              // no backing file any more
 err = img.Commit()                                    // the overlay is left as is
+```
+
+Change format options in place, like `qemu-img amend`:
+
+```go
+err = img.Amend(qcow2.AmendOptions{Version: 2})       // compat=0.10
+err = img.Amend(qcow2.AmendOptions{RefcountBits: 64}) // refcount_bits=64
 ```
 
 Modify an existing image in place:

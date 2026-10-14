@@ -127,10 +127,13 @@ func (img *Image) refGet(b []byte, i int64) (v uint64, start, end int64) {
 	}
 }
 
-func (img *Image) refSet(b []byte, i int64, v uint64) {
-	switch img.refOrder {
+func (img *Image) refSet(b []byte, i int64, v uint64) { refSetOrder(b, img.refOrder, i, v) }
+
+// refSetOrder encodes refcount i of a block with 2^order-bit entries.
+func refSetOrder(b []byte, order uint, i int64, v uint64) {
+	switch order {
 	case 0, 1, 2:
-		bits := uint64(1) << img.refOrder
+		bits := uint64(1) << order
 		pos := uint64(i) * bits
 		mask := byte(1<<bits-1) << (pos % 8)
 		b[pos/8] = b[pos/8]&^mask | byte(v<<(pos%8))&mask
