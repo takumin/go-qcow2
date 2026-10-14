@@ -9,7 +9,8 @@ import "github.com/takumin/go-qcow2"
 ## Features
 
 - qcow2 v2 / v3, cluster sizes 512 B – 2 MiB, all refcount widths (1–64 bits)
-- zlib / zstd compressed clusters (e.g. Ubuntu cloud images)
+- zlib / zstd compressed clusters (e.g. Ubuntu cloud images), read and written
+  (`WriteCompressedAt`, like `qemu-img convert -c`)
 - zero clusters
 - backing files (qcow2 or raw) and backing chains, relative names resolved like QEMU
 - creating images, growing images, changing the backing file (`qemu-img rebase -u`)
@@ -82,6 +83,13 @@ if err := img.Resize(20 << 30); err != nil {
 if _, err := img.WriteAt(data, offset); err != nil {
 	log.Fatal(err)
 }
+```
+
+Write compressed clusters, like `qemu-img convert -c` (whole clusters only;
+clusters that do not shrink are stored uncompressed):
+
+```go
+_, err := img.WriteCompressedAt(clusters, offset)
 ```
 
 Discard a range (like TRIM from the guest); it reads as zeros afterwards
