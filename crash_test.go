@@ -578,7 +578,8 @@ func qemuCheckCrashed(path string) (leaks int64, missingCopied bool, err error) 
 	case 3: // only leaked clusters
 	case 2:
 		for _, line := range strings.Split(string(out), "\n") {
-			if strings.HasPrefix(line, "ERROR") && !(strings.Contains(line, "OFLAG_COPIED") && strings.HasSuffix(line, "refcount=1")) {
+			missing := strings.Contains(line, "OFLAG_COPIED") && strings.HasSuffix(line, "refcount=1")
+			if strings.HasPrefix(line, "ERROR") && !missing {
 				return 0, false, fmt.Errorf("qemu-img check: %v\n%s", err, out)
 			}
 		}
