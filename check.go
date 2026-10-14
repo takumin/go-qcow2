@@ -84,8 +84,9 @@ func (img *Image) Check() (*CheckResult, error) {
 // of references, making them available for reuse (and punching them out of
 // the file), and then sets the COPIED flags of clusters it left with a
 // single reference. It refuses to touch an image with corruptions other
-// than missing COPIED flags; see Repair. A crash during the repair is harmless. It returns the number of
-// clusters repaired (Leaks + LeaksPastEOF).
+// than missing COPIED flags; see Repair. A crash during the repair is
+// harmless. It returns the number of clusters repaired (Leaks +
+// LeaksPastEOF).
 func (img *Image) RepairLeaks() (int64, error) {
 	img.mu.Lock()
 	defer img.mu.Unlock()
