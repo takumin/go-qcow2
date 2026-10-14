@@ -13,7 +13,8 @@ import "github.com/takumin/go-qcow2"
 - zero clusters
 - backing files (qcow2 or raw) and backing chains, relative names resolved like QEMU
 - creating images, growing images, changing the backing file (`qemu-img rebase -u`)
-- writes keep internal snapshots intact (copy-on-write for shared clusters)
+- internal snapshots: listed, created, applied and deleted (like `qemu-img snapshot`);
+  writes keep them intact (copy-on-write for shared clusters)
 - clusters freed by copy-on-write (or by deleting snapshots) are reused for new allocations,
   and on Linux their space is released with `fallocate(PUNCH_HOLE)` (disable with `NoPunchHole`)
 - `Discard` (TRIM/UNMAP): the range reads as zeros and its clusters are released
@@ -91,6 +92,22 @@ Modify an existing image in place:
 ```go
 img, err := qcow2.OpenFile("disk.qcow2", os.O_RDWR, nil)
 ```
+
+## Internal snapshots
+
+```go
+info, err := img.CreateSnapshot("before-upgrade") // qemu-img snapshot -c
+for _, s := range img.Snapshots() {               // qemu-img snapshot -l
+	fmt.Println(s.ID, s.Name, s.Date, s.Size)
+}
+err = img.ApplySnapshot("before-upgrade")  // qemu-img snapshot -a (by ID or name)
+err = img.DeleteSnapshot("before-upgrade") // qemu-img snapshot -d
+```
+
+Snapshots are disk-only; snapshots taken by QEMU with VM state can be
+listed, applied (disk contents only) and deleted. Like in QEMU, creating a
+snapshot adds a reference to every cluster, so the refcount width must
+leave room for it.
 
 ## Dirty bitmaps
 

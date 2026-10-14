@@ -8,8 +8,9 @@
 //     into a freshly allocated one)
 //   - zero clusters (version 3)
 //   - backing files (qcow2 or raw), including chains of backing files
-//   - internal snapshots are preserved: writes honour the COPIED flag and
-//     perform copy-on-write for clusters shared with snapshots
+//   - internal snapshots: writes honour the COPIED flag and perform
+//     copy-on-write for clusters shared with snapshots; snapshots can be
+//     listed, created, applied and deleted (see Snapshots)
 //   - creating images, growing images and changing the backing file
 //   - persistent dirty bitmaps: kept up to date on writes, readable and
 //     manageable (see Bitmaps and DirtyExtents)
@@ -155,6 +156,10 @@ type Image struct {
 	bitmapDirSize   int64
 	bitmapsChanged  bool
 
+	// Internal snapshots; see snapshot.go.
+	snapshots         []*snapshot
+	snapshotTableSize int64
+
 	decompEntry uint64
 	decompBuf   []byte
 }
@@ -260,6 +265,9 @@ func (img *Image) load() error {
 		return fmt.Errorf("qcow2: reading refcount table: %w", err)
 	}
 
+	if err := img.loadSnapshots(); err != nil {
+		return err
+	}
 	if h.Version >= 3 {
 		if err := img.loadBitmapDirectory(); err != nil {
 			return err
