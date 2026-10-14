@@ -357,34 +357,46 @@ func (img *Image) Resize(size int64) error {
 func (img *Image) SetBackingFile(name, format string) error {
 	img.mu.Lock()
 	defer img.mu.Unlock()
-	if img.closed {
-		return ErrClosed
+	if err := img.writable(); err != nil {
+		return err
 	}
-	if img.readOnly {
-		return ErrReadOnly
+	backing, format, err := img.openNewBacking(name, format)
+	if err != nil {
+		return err
 	}
-	var backing Backing
-	if name != "" {
-		if format == "" && img.opts.BackingOpener == nil {
-			path := name
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(filepath.Dir(img.name), path)
-			}
-			f, err := probeFormat(path)
-			if err != nil {
-				return fmt.Errorf("qcow2: opening backing file: %w", err)
-			}
-			format = f
-		}
-		b, err := img.openBackingNamed(name, format)
-		if err != nil {
-			return fmt.Errorf("qcow2: opening backing file: %w", err)
-		}
-		backing = b
-	} else if format != "" {
-		return errors.New("qcow2: format without backing file")
-	}
+	return img.switchBacking(name, format, backing)
+}
 
+// openNewBacking opens the backing file name (nil for none), detecting
+// its format when empty, and returns it with its format.
+func (img *Image) openNewBacking(name, format string) (Backing, string, error) {
+	if name == "" {
+		if format != "" {
+			return nil, "", errors.New("qcow2: format without backing file")
+		}
+		return nil, "", nil
+	}
+	if format == "" && img.opts.BackingOpener == nil {
+		path := name
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(filepath.Dir(img.name), path)
+		}
+		f, err := probeFormat(path)
+		if err != nil {
+			return nil, "", fmt.Errorf("qcow2: opening backing file: %w", err)
+		}
+		format = f
+	}
+	b, err := img.openBackingNamed(name, format)
+	if err != nil {
+		return nil, "", fmt.Errorf("qcow2: opening backing file: %w", err)
+	}
+	return b, format, nil
+}
+
+// switchBacking records a new backing file in the header and replaces the
+// opened one. It takes ownership of backing.
+func (img *Image) switchBacking(name, format string, backing Backing) error {
 	// The header written below carries the in-memory L1 and refcount table
 	// locations, so everything they point to must be on disk first.
 	err := img.flushAll()
