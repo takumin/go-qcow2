@@ -197,8 +197,9 @@ func (r *crashRecorder) flushedOK() {
 	r.flushedCount++
 }
 
-// runCrashWorkload runs a deterministic sequence of writes, discards,
-// flushes and one resize, stopping at the first error. With snapshots it
+// runCrashWorkload runs a deterministic sequence of writes (some
+// compressed), zeroing (with and without unmapping), flushes and one
+// resize, stopping at the first error. With snapshots it
 // also creates, applies and deletes snapshots; the image must then have a
 // snapshot named "snap".
 func runCrashWorkload(img *Image, seed uint64, rec *crashRecorder, snapshots bool) error {
@@ -268,7 +269,7 @@ func runCrashWorkload(img *Image, seed uint64, rec *crashRecorder, snapshots boo
 			l := 1 + rng.Int64N(16*cs)
 			off := rng.Int64N(size - l)
 			rec.touch(off, off+l)
-			if err := img.Discard(off, l); err != nil {
+			if err := img.WriteZeroes(off, l, rng.IntN(2) == 0); err != nil {
 				return err
 			}
 			clear(rec.shadow[off : off+l])
