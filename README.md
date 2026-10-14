@@ -20,6 +20,8 @@ import "github.com/takumin/go-qcow2"
 - persistent dirty bitmaps: maintained on writes, listed, read as dirty extents,
   added, removed, cleared, enabled and disabled
 - crash-consistent metadata updates, `Check` and `RepairLeaks`
+- `Map`: how each range is stored across the backing chain (like `qemu-img map`),
+  for sparse copies
 - `*qcow2.Image` implements `io.ReaderAt` and `io.WriterAt`
 
 Not supported: encryption, external data files, extended L2 entries (subclusters),
@@ -36,11 +38,26 @@ if err != nil {
 }
 defer img.Close()
 
-// Convert to raw.
+// Convert to raw, skipping the ranges that read as zeros.
 out, _ := os.Create("disk.raw")
 defer out.Close()
-io.Copy(out, io.NewSectionReader(img, 0, img.Size()))
+out.Truncate(img.Size())
+entries, err := img.Map(0, img.Size())
+if err != nil {
+	log.Fatal(err)
+}
+for _, e := range entries {
+	if e.Zero {
+		continue
+	}
+	io.Copy(io.NewOffsetWriter(out, e.Offset), io.NewSectionReader(img, e.Offset, e.Length))
+}
 ```
+
+`Map` reports, for each range, the layer of the backing chain it comes from
+(`Depth`), whether it reads as zeros (`Zero`), whether it is stored as data
+(`Data`, `Compressed`) and where (`HostOffset`), like
+`qemu-img map --output=json`.
 
 Create an overlay backed by the cloud image, grow it and write to it:
 
