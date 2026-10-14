@@ -365,11 +365,16 @@ func (img *Image) checkFeatures() error {
 }
 
 func (img *Image) openBacking() (Backing, error) {
-	path := img.hdr.backingFile
+	return img.openBackingNamed(img.hdr.backingFile, img.hdr.backingFormat)
+}
+
+// openBackingNamed opens a backing file named as in the header, relative
+// to the image, with Options.BackingOpener when set.
+func (img *Image) openBackingNamed(name, format string) (Backing, error) {
+	path := name
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(filepath.Dir(img.name), path)
 	}
-	format := img.hdr.backingFormat
 	if img.opts.BackingOpener != nil {
 		return img.opts.BackingOpener(path, format)
 	}
