@@ -41,6 +41,24 @@ type CreateOptions struct {
 
 // Create creates a new image. It fails if the file already exists.
 func Create(name string, opts CreateOptions) (*Image, error) {
+	if err := validateCreateOptions(&opts); err != nil {
+		return nil, err
+	}
+	// Creating the file the caller names is the purpose of this function;
+	// like qemu-img, the image is created world-readable (subject to umask).
+	f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644) // #nosec G302 G304
+	if err != nil {
+		return nil, err
+	}
+	img, err := createIn(fileStorage{f}, name, opts)
+	if err != nil {
+		return nil, withCleanup(err, f.Close(), os.Remove(name))
+	}
+	return img, nil
+}
+
+// validateCreateOptions fills in defaults and checks the options.
+func validateCreateOptions(opts *CreateOptions) error {
 	if opts.ClusterSize == 0 {
 		opts.ClusterSize = 64 << 10
 	}
@@ -52,19 +70,27 @@ func Create(name string, opts CreateOptions) (*Image, error) {
 	}
 	cs := opts.ClusterSize
 	if cs&(cs-1) != 0 || cs < 1<<minClusterBits || cs > 1<<maxClusterBits {
-		return nil, fmt.Errorf("qcow2: invalid cluster size %d", cs)
+		return fmt.Errorf("qcow2: invalid cluster size %d", cs)
 	}
 	if opts.Version != 2 && opts.Version != 3 {
-		return nil, fmt.Errorf("qcow2: invalid version %d", opts.Version)
+		return fmt.Errorf("qcow2: invalid version %d", opts.Version)
 	}
 	rb := opts.RefcountBits
 	if rb&(rb-1) != 0 || rb > 64 || (opts.Version == 2 && rb != 16) {
-		return nil, fmt.Errorf("qcow2: invalid refcount bits %d for version %d", rb, opts.Version)
+		return fmt.Errorf("qcow2: invalid refcount bits %d for version %d", rb, opts.Version)
 	}
 	if opts.Size < 0 {
-		return nil, fmt.Errorf("qcow2: invalid size %d", opts.Size)
+		return fmt.Errorf("qcow2: invalid size %d", opts.Size)
 	}
+	return nil
+}
 
+// createIn opens the backing file and creates the image in f. It closes
+// neither on failure.
+func createIn(f storage, name string, opts CreateOptions) (*Image, error) {
+	if err := validateCreateOptions(&opts); err != nil {
+		return nil, err
+	}
 	var backing Backing
 	if opts.BackingFile != "" {
 		path := opts.BackingFile
@@ -89,18 +115,10 @@ func Create(name string, opts CreateOptions) (*Image, error) {
 	} else if opts.BackingFormat != "" {
 		return nil, errors.New("qcow2: BackingFormat without BackingFile")
 	}
-
 	opts.Size = alignUp(opts.Size, 512)
-
-	// Creating the file the caller names is the purpose of this function;
-	// like qemu-img, the image is created world-readable (subject to umask).
-	f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644) // #nosec G302 G304
+	img, err := create(f, name, opts, backing)
 	if err != nil {
 		return nil, withCleanup(err, closeBacking(backing))
-	}
-	img, err := create(fileStorage{f}, name, opts, backing)
-	if err != nil {
-		return nil, withCleanup(err, f.Close(), os.Remove(name), closeBacking(backing))
 	}
 	return img, nil
 }
@@ -302,18 +320,18 @@ func (img *Image) SetBackingFile(name, format string) error {
 	}
 	var backing Backing
 	if name != "" {
-		path := name
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(filepath.Dir(img.name), path)
-		}
-		if format == "" {
+		if format == "" && img.opts.BackingOpener == nil {
+			path := name
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(filepath.Dir(img.name), path)
+			}
 			f, err := probeFormat(path)
 			if err != nil {
 				return fmt.Errorf("qcow2: opening backing file: %w", err)
 			}
 			format = f
 		}
-		b, err := openBackingFile(path, format, img.depth+1)
+		b, err := img.openBackingNamed(name, format)
 		if err != nil {
 			return fmt.Errorf("qcow2: opening backing file: %w", err)
 		}

@@ -24,6 +24,8 @@ import "github.com/takumin/go-qcow2"
 - `Map`: how each range is stored across the backing chain (like `qemu-img map`),
   for sparse copies
 - `*qcow2.Image` implements `io.ReaderAt` and `io.WriterAt`
+- images held outside files: in memory, behind an `io.ReaderAt` (e.g. HTTP range
+  requests) or any other `Storage`
 
 Not supported: encryption, external data files, extended L2 entries (subclusters),
 shrinking.
@@ -91,6 +93,19 @@ Modify an existing image in place:
 
 ```go
 img, err := qcow2.OpenFile("disk.qcow2", os.O_RDWR, nil)
+```
+
+Images do not have to be files. `OpenReaderAt` reads an image through any
+`io.ReaderAt`, and `OpenStorage` and `CreateStorage` work on any `Storage`
+(`ReadAt`, `WriteAt`, `Size`, `Truncate`, `Sync`, `Close`; optionally
+`PunchHole`). Backing files are then opened with `Options.BackingOpener`:
+
+```go
+img, err := qcow2.OpenReaderAt(httpReader, size, &qcow2.Options{
+	BackingOpener: func(path, format string) (qcow2.Backing, error) {
+		return openRemote(path)
+	},
+})
 ```
 
 ## Internal snapshots
