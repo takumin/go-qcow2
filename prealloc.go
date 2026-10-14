@@ -47,6 +47,7 @@ func (img *Image) preallocate(mode string) error {
 		}
 		img.l2Cache.put(l2, t, true)
 		img.l1[i] = uint64(l2) | flagCopied
+		img.l1Dirty[i] = struct{}{}
 		if err := img.fillClusters(mode, data, n*cs); err != nil {
 			return err
 		}

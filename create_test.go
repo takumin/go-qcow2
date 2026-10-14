@@ -114,3 +114,26 @@ func TestCreateFeatures(t *testing.T) {
 		}
 	}
 }
+
+// TestCreatePreallocationFlushes preallocates enough metadata to flush
+// part of it before the header is written.
+func TestCreatePreallocationFlushes(t *testing.T) {
+	requireQemu(t)
+	if testing.Short() {
+		t.Skip("writes about 40 MiB of metadata")
+	}
+	path := filepath.Join(t.TempDir(), "big.qcow2")
+	// 512-byte clusters: 4 Mi clusters, 128 Ki L2 tables, more than the
+	// cache holds.
+	img, err := Create(path, CreateOptions{Size: 2 << 30, ClusterSize: 512, Preallocation: PreallocMetadata})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeImage(t, img)
+	qemuCheck(t, path)
+	for _, e := range qemuMap(t, path, 0, 2<<30) {
+		if e.Depth != 0 || !e.Present {
+			t.Fatalf("unallocated range %+v", e)
+		}
+	}
+}

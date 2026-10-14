@@ -133,6 +133,10 @@ func (img *Image) upgrade() error {
 
 // downgrade converts a version 3 image to version 2.
 func (img *Image) downgrade() error {
+	// Bitmaps removed in this session are still in the bitmap directory.
+	if err := img.storeBitmaps(); err != nil {
+		return err
+	}
 	if img.refOrder != 4 {
 		if err := img.rebuildRefcounts(4); err != nil {
 			return err
