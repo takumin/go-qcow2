@@ -20,7 +20,8 @@ import "github.com/takumin/go-qcow2"
   writes keep them intact (copy-on-write for shared clusters)
 - clusters freed by copy-on-write (or by deleting snapshots) are reused for new allocations,
   and on Linux their space is released with `fallocate(PUNCH_HOLE)` (disable with `NoPunchHole`)
-- `Discard` (TRIM/UNMAP): the range reads as zeros and its clusters are released
+- `Discard` (TRIM/UNMAP): the range reads as zeros and its clusters are released;
+  `WriteZeroes` without unmapping keeps the clusters as preallocated zero clusters
 - persistent dirty bitmaps: maintained on writes, listed, read as dirty extents,
   added, removed, cleared, enabled and disabled
 - crash-consistent metadata updates, `Check`, `RepairLeaks` and `Repair`
@@ -110,6 +111,13 @@ and the clusters are released:
 
 ```go
 err := img.Discard(offset, length)
+```
+
+To zero a range but keep its clusters allocated, so that later writes there
+need no allocation (like `write_zeroes` without `MAY_UNMAP` in QEMU):
+
+```go
+err := img.WriteZeroes(offset, length, false)
 ```
 
 Modify an existing image in place:

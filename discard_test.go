@@ -170,3 +170,106 @@ func TestDiscardReadOnly(t *testing.T) {
 		t.Fatalf("got %v, want ErrReadOnly", err)
 	}
 }
+
+func TestWriteZeroesKeepsAllocation(t *testing.T) {
+	requireQemu(t)
+	for _, tc := range []struct {
+		name    string
+		version int
+		backing bool
+	}{
+		{"v3", 3, false},
+		{"v2", 2, false},
+		{"v3-backing", 3, true},
+		{"v2-backing", 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			const cs = 4096
+			opts := CreateOptions{Size: 8<<20 + 1536, Version: tc.version, ClusterSize: cs}
+			want := make([]byte, opts.Size)
+			if tc.backing {
+				base := filepath.Join(dir, "base.qcow2")
+				run(t, "qemu-img", "create", "-q", "-f", "qcow2", base, "8M")
+				run(t, "qemu-io", "-c", "write -P 0xee 0 8M", base)
+				opts.BackingFile = "base.qcow2"
+				copy(want, bytes.Repeat([]byte{0xee}, 8<<20))
+			}
+			path := filepath.Join(dir, "z.qcow2")
+			img, err := Create(path, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rng := rand.New(rand.NewPCG(41, uint64(tc.version)))
+			// Allocate the first 4 MiB, share part of it with a snapshot and
+			// compress some clusters.
+			data := make([]byte, 4<<20)
+			for i := range data {
+				data[i] = byte(rng.Uint32())
+			}
+			if _, err := img.WriteAt(data, 0); err != nil {
+				t.Fatal(err)
+			}
+			copy(want, data)
+			if _, err := img.CreateSnapshot("s"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := img.WriteAt(data[:1<<20], 0); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := img.WriteCompressedAt(bytes.Repeat([]byte("z"), 8*cs), 1<<20); err != nil {
+				t.Fatal(err)
+			}
+			copy(want[1<<20:], bytes.Repeat([]byte("z"), 8*cs))
+			if err := img.Flush(); err != nil {
+				t.Fatal(err)
+			}
+
+			// Zero owned, shared, compressed and unallocated clusters, with
+			// partial clusters at both ends.
+			zeroes := [][2]int64{{100, 1<<20 + 5*cs}, {3<<20 + 7, 2 << 20}}
+			for _, z := range zeroes {
+				if err := img.WriteZeroes(z[0], z[1], false); err != nil {
+					t.Fatal(err)
+				}
+				clear(want[z[0] : z[0]+z[1]])
+			}
+			assertEqual(t, "read back", readAll(t, img), want)
+			if err := img.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			size := fileSize(t, path)
+			if tc.version == 3 {
+				// The zeroed clusters the image owned (rewritten after the
+				// snapshot) are preallocated zero clusters.
+				es, err := img.Map(cs, 1<<20-cs)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, e := range es {
+					if !e.Zero || e.Data || e.HostOffset < 0 {
+						t.Fatalf("zeroed owned range %+v", e)
+					}
+				}
+			}
+
+			// Writing over the owned zero clusters needs no allocation.
+			for i := int64(cs); i < 1<<20; i++ {
+				want[i] = byte(rng.Uint32())
+			}
+			if _, err := img.WriteAt(want[cs:1<<20], cs); err != nil {
+				t.Fatal(err)
+			}
+			if err := img.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			if got := fileSize(t, path); got != size {
+				t.Errorf("file grew from %d to %d bytes writing over zeroed clusters", size, got)
+			}
+			closeImage(t, img)
+			assertClean(t, path)
+			assertEqual(t, "qemu view", qemuRaw(t, path), want)
+
+		})
+	}
+}
