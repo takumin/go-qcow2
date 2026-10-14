@@ -54,6 +54,30 @@ func punchHole(f *os.File, off, size int64) error {
 	return ferr
 }
 
+// allocate reserves the space of the given range of f, extending it if
+// needed.
+func allocate(f *os.File, off, size int64) error {
+	rc, err := f.SyscallConn()
+	if err != nil {
+		return err
+	}
+	var ferr error
+	if err := rc.Control(func(fd uintptr) {
+		for {
+			ferr = unix.Fallocate(int(fd), 0, off, size)
+			if ferr != unix.EINTR {
+				return
+			}
+		}
+	}); err != nil {
+		return err
+	}
+	if errors.Is(ferr, unix.EOPNOTSUPP) || errors.Is(ferr, unix.ENOSYS) {
+		return errAllocUnsupported
+	}
+	return ferr
+}
+
 // seekData returns the start of the first data region at or after off, or
 // io.EOF when there is none.
 func seekData(f *os.File, off int64) (int64, error) { return seek(f, off, unix.SEEK_DATA) }

@@ -33,6 +33,8 @@ const (
 	incompatCompressionType = 1 << 3
 	incompatExtendedL2      = 1 << 4
 
+	compatLazyRefcounts = 1 << 0
+
 	compressionZlib = 0
 	compressionZstd = 1
 
