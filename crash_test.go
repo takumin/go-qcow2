@@ -402,8 +402,9 @@ func TestCrashConsistency(t *testing.T) {
 			points := map[int]bool{}
 			flushOps := st.flushOps
 			if testing.Short() {
+				// About 60 points per scenario, at least every 20th.
 				flushOps = flushOps[:0:0]
-				for i := 0; i < len(st.flushOps); i += 20 {
+				for i := 0; i < len(st.flushOps); i += max(20, len(st.flushOps)/60) {
 					flushOps = append(flushOps, st.flushOps[i])
 				}
 			}
@@ -411,12 +412,13 @@ func TestCrashConsistency(t *testing.T) {
 				points[op] = true
 			}
 			// The operations right after a metadata update, e.g. the first
-			// guest write after flagging bitmaps in use.
+			// guest write after flagging bitmaps in use (in -short mode,
+			// after the sampled updates only).
 			inFlush := map[int]bool{}
 			for _, op := range st.flushOps {
 				inFlush[op] = true
 			}
-			for _, op := range st.flushOps {
+			for _, op := range flushOps {
 				if !inFlush[op+1] {
 					for d := 2; d <= 4 && op+d <= st.ops; d++ {
 						points[op+d] = true
