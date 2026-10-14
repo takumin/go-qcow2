@@ -14,7 +14,7 @@ import "github.com/takumin/go-qcow2"
 - zero clusters
 - backing files (qcow2 or raw) and backing chains, relative names resolved like QEMU
 - creating images (zlib or zstd compression, lazy refcounts, preallocation
-  `metadata` / `falloc` / `full`), growing images
+  `metadata` / `falloc` / `full`), growing and shrinking images
 - changing the version (2 ↔ 3), the refcount width and lazy refcounts of an
   existing image (`qemu-img amend`)
 - changing the backing file, with (`qemu-img rebase`) or without
@@ -37,8 +37,7 @@ import "github.com/takumin/go-qcow2"
 - images held outside files: in memory, behind an `io.ReaderAt` (e.g. HTTP range
   requests) or any other `Storage`
 
-Not supported: encryption, external data files, extended L2 entries (subclusters),
-shrinking.
+Not supported: encryption, external data files, extended L2 entries (subclusters).
 
 ## Usage
 
@@ -108,6 +107,13 @@ clusters that do not shrink are stored uncompressed):
 
 ```go
 _, err := img.WriteCompressedAt(clusters, offset)
+```
+
+Shrink the disk, like `qemu-img resize --shrink` (`Resize` only grows, so
+that data is not dropped by accident):
+
+```go
+err := img.Shrink(10 << 30)
 ```
 
 Discard a range (like TRIM from the guest); it reads as zeros afterwards
@@ -281,7 +287,8 @@ go test ./...
 QCOW2_TEST_IMAGE=/path/to/ubuntu-26.04-server-cloudimg-amd64.img go test -run TestRealImage -v
 ```
 
-`TestCrashConsistency` runs writes, discards, a resize and, on images with
+`TestCrashConsistency` runs writes (some compressed), zeroing with and without
+unmapping, growing, shrinking and, on images with
 snapshots, snapshot creation, application and deletion. It simulates crashes
 at every storage operation performed while flushing (and at a sample of the
 others), both as a process crash and as
