@@ -88,6 +88,12 @@ type Options struct {
 	// (other platforms and file systems without support keep it).
 	NoPunchHole bool
 
+	// Repair repairs the image when it is opened writable, like
+	// "qemu-img check -r all" (see Image.Repair). Images marked corrupt
+	// can only be opened writable with it. Images left dirty by QEMU's
+	// lazy refcounts are repaired on a writable open anyway, as in QEMU.
+	Repair bool
+
 	// WriteThrough flushes after every WriteAt, Discard and Resize, so
 	// that each call is durable when it returns. This costs several syncs
 	// per call. Without it, call Flush (or Close) to make changes durable.
@@ -138,6 +144,9 @@ type Image struct {
 	reserved map[int64]struct{}
 	// noPunchHole disables releasing freed clusters to the file system.
 	noPunchHole bool
+	// inUse, while Repair runs, holds the references of every cluster;
+	// clusters it counts are never allocated.
+	inUse []uint64
 
 	// Changes not yet written; see flush.go.
 	dataDirty        bool
@@ -286,6 +295,12 @@ func (img *Image) load() error {
 		}
 	}
 
+	if !img.readOnly && (img.opts.Repair || h.IncompatibleFeatures&incompatDirty != 0) {
+		if _, err := img.repair(); err != nil {
+			return fmt.Errorf("qcow2: repairing image: %w", err)
+		}
+	}
+
 	if h.backingFile != "" && !img.opts.NoBacking {
 		b, err := img.openBacking()
 		if err != nil {
@@ -353,13 +368,8 @@ func (img *Image) checkFeatures() error {
 	default:
 		return fmt.Errorf("%w: compression type %d", ErrUnsupported, h.CompressionType)
 	}
-	if !img.readOnly {
-		if h.IncompatibleFeatures&incompatCorrupt != 0 {
-			return fmt.Errorf("%w: image is marked corrupt; open it read-only or repair it with qemu-img check -r all", ErrCorrupt)
-		}
-		if h.IncompatibleFeatures&incompatDirty != 0 {
-			return fmt.Errorf("%w: image is dirty (lazy refcounts); repair it with qemu-img check -r all", ErrUnsupported)
-		}
+	if !img.readOnly && !img.opts.Repair && h.IncompatibleFeatures&incompatCorrupt != 0 {
+		return fmt.Errorf("%w: image is marked corrupt; open it read-only, or writable with Options.Repair", ErrCorrupt)
 	}
 	return nil
 }

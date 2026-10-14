@@ -63,6 +63,9 @@ func (img *Image) isFree(c int64) (bool, error) {
 	if _, ok := img.reserved[c]; ok {
 		return false, nil
 	}
+	if i := c >> img.clusterBits; i < int64(len(img.inUse)) && img.inUse[i] > 0 {
+		return false, nil
+	}
 	rc, err := img.refcount(c)
 	return rc == 0, err
 }

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -197,13 +198,37 @@ func (r *crashRecorder) flushedOK() {
 }
 
 // runCrashWorkload runs a deterministic sequence of writes, discards,
-// flushes and one resize, stopping at the first error.
-func runCrashWorkload(img *Image, seed uint64, rec *crashRecorder) error {
+// flushes and one resize, stopping at the first error. With snapshots it
+// also creates, applies and deletes snapshots; the image must then have a
+// snapshot named "snap".
+func runCrashWorkload(img *Image, seed uint64, rec *crashRecorder, snapshots bool) error {
 	rng := rand.New(rand.NewPCG(seed, 99))
 	cs := img.ClusterSize()
+	var w1 []byte
 	for step := range 100 {
 		size := int64(len(rec.shadow))
 		switch k := rng.IntN(20); {
+		case snapshots && step == 30:
+			if _, err := img.CreateSnapshot("w1"); err != nil {
+				return err
+			}
+			w1 = bytes.Clone(rec.shadow)
+			rec.flushedOK()
+		case snapshots && (step == 40 || step == 85):
+			name := map[int]string{40: "snap", 85: "w1"}[step]
+			if err := img.DeleteSnapshot(name); err != nil {
+				return err
+			}
+			rec.flushedOK()
+		case snapshots && step == 70:
+			// The whole disk changes, and so does its size.
+			rec.touch(0, max(size, int64(len(w1))))
+			rec.sizes = append(rec.sizes, int64(len(w1)))
+			if err := img.ApplySnapshot("w1"); err != nil {
+				return err
+			}
+			rec.shadow = bytes.Clone(w1)
+			rec.flushedOK()
 		case step == 50:
 			newSize := size + 2<<20
 			rec.touch(size, newSize)
@@ -248,12 +273,14 @@ func runCrashWorkload(img *Image, seed uint64, rec *crashRecorder) error {
 
 type crashScenario struct {
 	name string
+	// snapshots runs the workload with snapshot operations.
+	snapshots bool
 	// setup creates the initial image in dir and returns its path.
 	setup func(t *testing.T, dir string) string
 }
 
 var crashScenarios = []crashScenario{
-	{"compressed-snapshot", func(t *testing.T, dir string) string {
+	{"compressed-snapshot", true, func(t *testing.T, dir string) string {
 		raw := filepath.Join(dir, "src.raw")
 		compressibleRaw(t, raw, 4<<20)
 		path := filepath.Join(dir, "img.qcow2")
@@ -261,7 +288,7 @@ var crashScenarios = []crashScenario{
 		run(t, "qemu-img", "snapshot", "-c", "snap", path)
 		return path
 	}},
-	{"overlay-512-rb64", func(t *testing.T, dir string) string {
+	{"overlay-512-rb64", false, func(t *testing.T, dir string) string {
 		compressibleRaw(t, filepath.Join(dir, "base.raw"), 4<<20)
 		path := filepath.Join(dir, "img.qcow2")
 		img, err := Create(path, CreateOptions{Size: 3 << 20, ClusterSize: 512, RefcountBits: 64, BackingFile: "base.raw"})
@@ -273,7 +300,7 @@ var crashScenarios = []crashScenario{
 		}
 		return path
 	}},
-	{"bitmaps", func(t *testing.T, dir string) string {
+	{"bitmaps", false, func(t *testing.T, dir string) string {
 		path := filepath.Join(dir, "img.qcow2")
 		run(t, "qemu-img", "create", "-q", "-f", "qcow2", "-o", "cluster_size=4096", path, "4M")
 		run(t, "qemu-img", "bitmap", "--add", "-g", "4096", path, "enabled")
@@ -285,7 +312,7 @@ var crashScenarios = []crashScenario{
 		run(t, "qemu-img", "bitmap", "--clear", path, "enabled")
 		return path
 	}},
-	{"v2-snapshot", func(t *testing.T, dir string) string {
+	{"v2-snapshot", true, func(t *testing.T, dir string) string {
 		path := filepath.Join(dir, "img.qcow2")
 		run(t, "qemu-img", "create", "-q", "-f", "qcow2", "-o", "compat=0.10,cluster_size=1024", path, "4M")
 		run(t, "qemu-io", "-c", "write -P 0x3c 0 3M", path)
@@ -325,7 +352,7 @@ func TestCrashConsistency(t *testing.T) {
 				t.Fatal(err)
 			}
 			rec := newRecorder()
-			if err := runCrashWorkload(img, 1, rec); err != nil {
+			if err := runCrashWorkload(img, 1, rec, sc.snapshots); err != nil {
 				t.Fatal(err)
 			}
 			// Bitmaps hold their initial contents until Close stores the
@@ -387,7 +414,7 @@ func TestCrashConsistency(t *testing.T) {
 					for crashAt := range work {
 						if err == nil {
 							crashSlots <- struct{}{}
-							err = crashAndVerify(t, dir, fmt.Sprint("w", w), initial, path, crashAt, newRecorder)
+							err = crashAndVerify(t, dir, fmt.Sprint("w", w), initial, path, crashAt, sc.snapshots, newRecorder)
 							<-crashSlots
 						}
 					}
@@ -408,7 +435,7 @@ func TestCrashConsistency(t *testing.T) {
 	}
 }
 
-func crashAndVerify(t *testing.T, dir, worker string, initial []byte, path string, crashAt int, newRecorder func() *crashRecorder) (err error) {
+func crashAndVerify(t *testing.T, dir, worker string, initial []byte, path string, crashAt int, snapshots bool, newRecorder func() *crashRecorder) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("crash at op %d: %v", crashAt, r)
@@ -420,7 +447,7 @@ func crashAndVerify(t *testing.T, dir, worker string, initial []byte, path strin
 		return err
 	}
 	rec := newRecorder()
-	if err := runCrashWorkload(img, 1, rec); !errors.Is(err, errCrash) {
+	if err := runCrashWorkload(img, 1, rec, snapshots); !errors.Is(err, errCrash) {
 		return fmt.Errorf("crash at %d: workload returned %v", crashAt, err)
 	}
 	rng := rand.New(rand.NewPCG(uint64(crashAt), 7))
@@ -450,7 +477,7 @@ func checkCrashImage(dir, worker string, data []byte, rec *crashRecorder, what s
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return err
 	}
-	qemuLeaks, err := qemuLeakCount(path)
+	qemuLeaks, missingCopied, err := qemuCheckCrashed(path)
 	if err != nil {
 		return fmt.Errorf("%s: %v", what, err)
 	}
@@ -458,7 +485,7 @@ func checkCrashImage(dir, worker string, data []byte, rec *crashRecorder, what s
 	if err != nil {
 		return fmt.Errorf("%s: %v", what, err)
 	}
-	if err := checkAndRepair(path, qemuLeaks, got); err != nil {
+	if err := checkAndRepair(path, qemuLeaks, missingCopied, got); err != nil {
 		return fmt.Errorf("%s: %v", what, err)
 	}
 	img, err := Open(path)
@@ -502,22 +529,49 @@ func checkCrashImage(dir, worker string, data []byte, rec *crashRecorder, what s
 // qemuLeakCount runs qemu-img check and returns the number of leaked
 // clusters; any other problem is an error.
 func qemuLeakCount(path string) (int64, error) {
+	n, missingCopied, err := qemuCheckCrashed(path)
+	if err == nil && missingCopied {
+		err = errors.New("qemu-img check: missing COPIED flags")
+	}
+	return n, err
+}
+
+// qemuCheckCrashed runs qemu-img check on a crashed image and returns the
+// number of leaked clusters and whether COPIED flags are missing on
+// clusters with a refcount of 1. Both are harmless: a crash after a
+// snapshot is deleted, before the flags are set again, leaves the latter
+// (in QEMU too). Any other problem is an error.
+func qemuCheckCrashed(path string) (leaks int64, missingCopied bool, err error) {
 	out, err := exec.Command("qemu-img", "check", path).CombinedOutput()
 	if err == nil {
-		return 0, nil
+		return 0, false, nil
 	}
 	var ee *exec.ExitError
-	// Exit status 3: only leaked clusters.
-	if !errors.As(err, &ee) || ee.ExitCode() != 3 {
-		return 0, fmt.Errorf("qemu-img check: %v\n%s", err, out)
+	if !errors.As(err, &ee) {
+		return 0, false, fmt.Errorf("qemu-img check: %v\n%s", err, out)
+	}
+	switch ee.ExitCode() {
+	case 3: // only leaked clusters
+	case 2:
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(line, "ERROR") && !(strings.Contains(line, "OFLAG_COPIED") && strings.HasSuffix(line, "refcount=1")) {
+				return 0, false, fmt.Errorf("qemu-img check: %v\n%s", err, out)
+			}
+		}
+		missingCopied = true
+	default:
+		return 0, false, fmt.Errorf("qemu-img check: %v\n%s", err, out)
 	}
 	var n int64
 	for _, line := range bytes.Split(out, []byte("\n")) {
 		if _, err := fmt.Sscanf(string(line), "%d leaked clusters were found on the image.", &n); err == nil {
-			return n, nil
+			return n, missingCopied, nil
 		}
 	}
-	return 0, fmt.Errorf("no leak count in qemu-img check output:\n%s", out)
+	if missingCopied {
+		return 0, true, nil
+	}
+	return 0, false, fmt.Errorf("no leak count in qemu-img check output:\n%s", out)
 }
 
 func qemuRawErr(path string) ([]byte, error) {
@@ -531,9 +585,9 @@ func qemuRawErr(path string) ([]byte, error) {
 }
 
 // checkAndRepair verifies that Check agrees with qemu-img check, then
-// repairs the leaks and verifies that qemu-img check is clean and the
-// guest data unchanged.
-func checkAndRepair(path string, qemuLeaks int64, data []byte) (err error) {
+// repairs the leaks and missing COPIED flags and verifies that qemu-img
+// check is clean and the guest data unchanged.
+func checkAndRepair(path string, qemuLeaks int64, missingCopied bool, data []byte) (err error) {
 	img, err := OpenFile(path, os.O_RDWR, nil)
 	if err != nil {
 		return err
@@ -543,10 +597,16 @@ func checkAndRepair(path string, qemuLeaks int64, data []byte) (err error) {
 	if err != nil {
 		return err
 	}
-	if res.Leaks != qemuLeaks || res.Corruptions != 0 {
-		return fmt.Errorf("Check: %d leaks, %d corruptions %v; qemu-img check: %d leaks", res.Leaks, res.Corruptions, res.Errors, qemuLeaks)
+	if res.Leaks != qemuLeaks || (res.Corruptions != 0) != missingCopied {
+		return fmt.Errorf("Check: %d leaks, %d corruptions %v; qemu-img check: %d leaks, missing COPIED flags: %v",
+			res.Leaks, res.Corruptions, res.Errors, qemuLeaks, missingCopied)
 	}
-	if res.Leaks+res.LeaksPastEOF == 0 {
+	for _, e := range res.Errors {
+		if !strings.HasSuffix(e, "COPIED flag does not match refcount 1") {
+			return fmt.Errorf("Check: %v", res.Errors)
+		}
+	}
+	if res.Leaks+res.LeaksPastEOF == 0 && !missingCopied {
 		return nil
 	}
 	repairedImages.Add(1)
