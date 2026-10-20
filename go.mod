@@ -1,6 +1,6 @@
 module github.com/takumin/go-qcow2
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/klauspost/compress v1.20.3
