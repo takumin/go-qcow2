@@ -1,5 +1,5 @@
 ---
 packages:
-- name: evilmartians/lefthook@v2.2.3
+- name: evilmartians/lefthook@v2.2.4
   tags:
   - lefthook
